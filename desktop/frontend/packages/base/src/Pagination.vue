@@ -45,6 +45,8 @@ const shouldShow = computed(() => {
 
 // 处理页码变化
 function jumpPage(val: number) {
+  // 非数字输入(如 'abc' → NaN)直接忽略,避免 NaN 页码导致列表消失
+  if (!Number.isFinite(Number(val))) return
   if (Number(val) > pageCount.value) val = pageCount.value
   if (Number(val) <= 0) val = 1
   internalCurrentPage.value = val

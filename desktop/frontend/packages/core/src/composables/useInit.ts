@@ -4,9 +4,11 @@ import { BaseState, SettingState, useBaseStore, useRuntimeStore, useSettingStore
 import { ensureHashGuardBeforeInit, useDataSyncPersistence } from './useDataSyncPersistence'
 import { SyncDataType } from '../types'
 import { SubscriptionCallbackMutation } from 'pinia'
+import { Toast } from '@english-learner/base'
 
 let unsub = null
 let unsub2 = null
+let saveErrorToastAt = 0 // 保存失败提示节流:一段时间内只弹一次,避免每次状态变更都弹
 
 export function useInit() {
   const store = useBaseStore()
@@ -16,6 +18,16 @@ export function useInit() {
   let initializing = false // 标记是否正在初始化
   let fetching = false
   let fetching2 = false
+
+  // 主落盘链路失败兜底:静默丢进度最危险,提示用户(30 秒内只提示一次)
+  function notifySaveError(err: unknown) {
+    console.error('学习数据保存失败', err)
+    const now = Date.now()
+    if (now - saveErrorToastAt > 30000) {
+      saveErrorToastAt = now
+      Toast.error('学习数据保存失败,请检查磁盘空间')
+    }
+  }
 
   //init 有可能重复执行，因为从老网站导了数据之后需要 init
   async function init() {
@@ -47,6 +59,8 @@ export function useInit() {
         fetching = true
         try {
           await dataSync.saveDictState(data)
+        } catch (e) {
+          notifySaveError(e)
         } finally {
           fetching = false
         }
@@ -66,6 +80,8 @@ export function useInit() {
         fetching2 = true
         try {
           await dataSync.saveLocalAndSync(SyncDataType.setting, data)
+        } catch (e) {
+          notifySaveError(e)
         } finally {
           fetching2 = false
         }

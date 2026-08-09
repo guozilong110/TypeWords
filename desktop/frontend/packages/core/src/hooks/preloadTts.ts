@@ -17,7 +17,7 @@ const PERSIST_KEY = 'tts-trans-cache' // IndexedDB 键(idb-keyval)
 const PERSIST_MAX = 400 // 持久化条数上限(每条约 20-40KB,约 10MB)
 const PERSIST_DEBOUNCE = 1000 // 防抖:1 秒内多次写入合并为一次
 
-/** word -> data URL(有道发音,主进程代理下载) */
+/** word:type -> data URL(有道发音,主进程代理下载);key 带音色,英音/美音互不串用 */
 const wordAudioCache = new Map<string, string>()
 /** 释义文本(+音色/语速/时间) -> Edge TTS data URL */
 const transAudioCache = new Map<string, { src: string; voice?: string; speed?: number; ts: number }>()
@@ -25,8 +25,18 @@ const transGenerating = new Set<string>()
 let persistTimer: any = null
 let persistLoaded = false
 
-export function getCachedWordAudio(word: string): string | null {
-  return wordAudioCache.get(word) ?? null
+/** 有道音色 → type 参数:uk=英音(1),其余美音(2) */
+function soundTypeToParam(soundType: string): number {
+  return soundType === 'uk' ? 1 : 2
+}
+
+/** 发音缓存 key:word + 音色(切换英/美音后互不命中,不会播放错音色) */
+function wordAudioKey(word: string, type: number): string {
+  return `${word}:${type}`
+}
+
+export function getCachedWordAudio(word: string, soundType: string): string | null {
+  return wordAudioCache.get(wordAudioKey(word, soundTypeToParam(soundType))) ?? null
 }
 
 /** 命中缓存且音色/语速一致才返回(设置变更后自动失效,重新合成) */
@@ -122,14 +132,15 @@ export async function clearAllTtsCaches() {
  * 练习页滑窗预加载 + 播放未命中时的后台补缓存都用它。
  */
 export async function prefetchWordAudio(word: string, soundType: string) {
-  if (!word || wordAudioCache.has(word)) return
+  const type = soundTypeToParam(soundType)
+  const key = wordAudioKey(word, type)
+  if (!word || wordAudioCache.has(key)) return
   try {
-    const type = soundType === 'uk' ? 1 : 2
     const fetchAudio = (window as any).desktop?.fetchWordAudio
     if (typeof fetchAudio !== 'function') return
     const src = await fetchAudio(word, type)
-    if (src && !wordAudioCache.has(word)) {
-      wordAudioCache.set(word, src)
+    if (src && !wordAudioCache.has(key)) {
+      wordAudioCache.set(key, src)
     }
   } catch {
     // 静默:断网/失败跳过,播放时走在线
@@ -214,7 +225,8 @@ export function schedulePrefetch(
   // ② 滑窗词的发音/翻译(原有逻辑,缓存命中自动跳过)
   for (const w of targets) {
     if (!w?.word) continue
-    if (!wordAudioCache.has(w.word)) tasks.push(() => prefetchWordAudio(w.word, opts.soundType))
+    const audioKey = wordAudioKey(w.word, soundTypeToParam(opts.soundType))
+    if (!wordAudioCache.has(audioKey)) tasks.push(() => prefetchWordAudio(w.word, opts.soundType))
     const store = useSettingStore()
     const transText = buildTransSpeechText(w.trans, store.showDetailedTrans, store.limitTransSpeech)
     // has 判断同样兼容旧缓存(句号 key),命中旧缓存就不重复合成

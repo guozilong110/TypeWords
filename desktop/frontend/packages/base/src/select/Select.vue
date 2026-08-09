@@ -91,12 +91,19 @@ function onClick(e: PointerEvent) {
   }
 }
 
+// 外部点击关闭:监听挂在下拉开合状态上(原实现挂 modelValue 真假值——
+// 选中值为空时打开下拉,监听器没挂上,点外部永远关不掉)
+watch(
+  () => isOpen.value,
+  open => {
+    if (open) window.addEventListener('click', onClick)
+    else window.removeEventListener('click', onClick)
+  }
+)
+
 watch(
   () => props.modelValue,
   newValue => {
-    if (newValue) window.addEventListener('click', onClick)
-    else window.removeEventListener('click', onClick)
-
     selectValue.value = newValue
     if (slots.default) {
       let slot = slots.default()

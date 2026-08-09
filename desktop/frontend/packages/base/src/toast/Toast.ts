@@ -113,7 +113,14 @@ Toast.error = (message: string, options?: Omit<ToastOptions, 'message' | 'type'>
 
 // 关闭所有消息
 Toast.closeAll = () => {
-  toastContainers.forEach(container => container.instance.close())
+  // 直接移除 DOM(原实现先清空数组再走动画回调,回调 findIndex 找不到容器,
+  // 每次 closeAll 都在 body 残留不可见的 fixed 容器)
+  toastContainers.forEach(({ container }) => {
+    try {
+      render(null, container)
+      container.remove()
+    } catch {}
+  })
   toastContainers = []
 }
 

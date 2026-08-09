@@ -44,6 +44,8 @@ async function fetchWordData(rawWord: string) {
   // 桌面版:已加载词库 + 全部内嵌词库索引,离线可用
   for (const candidate of candidates) {
     const found = await findWordGlobally(candidate)
+    // 竞态守卫:await 期间用户点了别的词(queryWord 已被新词覆盖),丢弃过期结果
+    if (wordLookupState.queryWord !== stripped) return
     if (found) {
       cache.set(stripped, found)
       wordLookupState.data = found
@@ -53,6 +55,8 @@ async function fetchWordData(rawWord: string) {
     }
   }
 
+  // 竞态守卫:同上
+  if (wordLookupState.queryWord !== stripped) return
   cache.set(stripped, null)
   wordLookupState.data = null
   wordLookupState.notFound = true
@@ -80,7 +84,8 @@ export async function lookupWord(e: MouseEvent, rawWord: string, playAudio?: (wo
   }
 
   await fetchWordData(rawWord)
-  if (wordLookupState.visible && target.isConnected) {
+  // 竞态守卫:只对仍是当前查询词的请求刷新弹窗位置
+  if (wordLookupState.queryWord === stripped && wordLookupState.visible && target.isConnected) {
     updatePosition(target)
   }
 }

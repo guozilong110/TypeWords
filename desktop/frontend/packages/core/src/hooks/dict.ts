@@ -107,14 +107,17 @@ export function getCurrentStudyWord(): TaskWords {
   const store = useBaseStore()
   let data: TaskWords = { new: [], review: [] }
   let dict = store.sdict
-  let words = dict.words.slice()
+  // 直接引用 words 数组:函数内只读(filter/map/slice),无需防御性拷贝
+  // (84 万词 slice 每次开始学习/下一组分配几十 MB 瞬时内存)
+  let words = dict.words
 
   if (words?.length) {
     const settingStore = useSettingStore()
     //忽略列表：简单词或已掌握
     const ignoreSet = [store.allIgnoreWordsSet, store.knownWordsSet][settingStore.ignoreSimpleWord ? 0 : 1]
     const perDay = dict.perDayStudyNumber
-    const start = dict.lastLearnIndex
+    // 防御:历史数据可能残留负的 lastLearnIndex(repeat 扣减过头的存档),负起始会越界访问 words[i] 抛错
+    const start = Math.max(0, dict.lastLearnIndex)
     const complete = dict.complete
     const isEnd = start >= dict.length - 1 && dict.length !== 1
     const reviewRatio = settingStore.wordReviewRatio
@@ -125,7 +128,8 @@ export function getCurrentStudyWord(): TaskWords {
       for (let i = start; i < words.length; i++) {
         let item = words[i]
         if (data.new.length >= perDay) break
-        if (!ignoreSet.has(item.word)) {
+        // ignoreSet 已小写化,查询统一 toLowerCase(Christ 等大写词也能被"已掌握"过滤)
+        if (!ignoreSet.has(item.word.toLowerCase())) {
           data.new.push(item)
         }
         end++
@@ -179,13 +183,14 @@ export function getCurrentStudyWord(): TaskWords {
         // 固定填充逻辑
         let list = words.slice(0, start).reverse()
         if (complete) list = list.concat(words.slice(end).reverse())
-        // 固定填充复习词需要过滤掉有FSRS记录的
+        // 固定填充复习词需要过滤掉有FSRS记录的(统一小写:ignoreSet/fsrsData key/new 混入时口径一致)
         let set = new Set(
           Array.from(ignoreSet)
             .concat(Object.keys(store.fsrsData))
             .concat(data.new.map(v => v.word.toLowerCase()))
+            .map(v => v.toLowerCase())
         )
-        list = list.filter(item => !set.has(item.word))
+        list = list.filter(item => !set.has(item.word.toLowerCase()))
         data.review = data.review.concat(list.slice(0, totalNeed - data.review.length))
       }
     }

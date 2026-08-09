@@ -233,7 +233,8 @@ export function usePlayWordAudio() {
     // console.log('playAudio-handle', handle, playbackRate)
 
     // 练习页预加载缓存命中(blob URL)则直接播放,零延迟;否则在线有道
-    const cachedUrl = getCachedWordAudio(word)
+    // 缓存 key 带音色:切换英/美音后不会播放旧音色的缓存
+    const cachedUrl = getCachedWordAudio(word, settingStore.soundType)
     if (!cachedUrl) {
       // 播放即缓存:未命中时后台走主进程代理下载存缓存,下次遇到同一词零延迟(滑窗预加载之外的兜底)
       prefetchWordAudio(word, settingStore.soundType)

@@ -7,6 +7,7 @@ import { DictType } from '@english-learner/core/types/enum.ts'
 import { getDefaultDict, getDefaultWord } from '@english-learner/core/types/func.ts'
 import type { Dict, Word } from '@english-learner/core/types/types.ts'
 import { cloneDeep, convertToWord, loadJsLib } from '@english-learner/core/utils'
+import { findWordInLoadedDicts } from '@english-learner/core/hooks/dictIndex.ts'
 import saveAs from 'file-saver'
 import { nanoid } from 'nanoid'
 import { computed, onMounted, ref, watch } from 'vue'
@@ -193,18 +194,7 @@ function restoreFromRoute() {
 
 onMounted(restoreFromRoute)
 watch(() => route.query, restoreFromRoute)
-watch(importType, () => {
-  selectedDict.value = null
-  pendingDict.value = null
-  showCreateForm.value = false
-  textInput.value = ''
-  selectedFile.value = null
-  selectedFileName.value = ''
-  selectedCustomFile.value = null
-  selectedCustomFileName.value = ''
-  importSummary.value = null
-  if (!route.query.step) step.value = 1
-})
+// importType 恒为 'word' 常量,此 watch 永不触发,原表单重置逻辑是死代码,保留仅作未来多类型导入的占位
 
 function selectTarget(dict: Dict) {
   selectedDict.value = dict
@@ -529,17 +519,18 @@ async function parseCustomXlsxWordFile(file: File): Promise<Word[]> {
 
 function mergeCustomWords(target: Dict, customWords: Word[]): { next: Dict; summary: ImportResultSummary } | null {
   const next = cloneDeep(target)
-  const existsSet = new Set(next.words.map(w => w.word))
+  // 统一小写去重:词库已有 apple 时导入 Apple 判为已存在,不再重复导入
+  const existsSet = new Set(next.words.map(w => w.word.toLowerCase()))
   let customCountAdded = 0
   let skippedCount = 0
 
   customWords.forEach(word => {
-    if (existsSet.has(word.word)) {
+    if (existsSet.has(word.word.toLowerCase())) {
       skippedCount++
       return
     }
     next.words.push(word)
-    existsSet.add(word.word)
+    existsSet.add(word.word.toLowerCase())
     customCountAdded++
   })
 
@@ -560,6 +551,177 @@ function mergeCustomWords(target: Dict, customWords: Word[]): { next: Dict; summ
       failedItems: [],
       type: 'word',
     },
+  }
+}
+
+// ===== 导入提交与失败处理(模板按钮事件;此前缺失导致整个导入链路不可用) =====
+
+/** 官方文件选择(单词列表 txt/json/xlsx) */
+function selectFile(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  selectedFile.value = file
+  selectedFileName.value = file.name
+  selectedCustomFile.value = null
+  selectedCustomFileName.value = ''
+}
+
+/** 自定义 xlsx 文件选择(含翻译/音标等字段) */
+function selectCustomFile(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  selectedCustomFile.value = file
+  selectedCustomFileName.value = file.name
+  selectedFile.value = null
+  selectedFileName.value = ''
+}
+
+/** 把查到的词条合并进目标词典(跳过已存在的),返回新词典与摘要 */
+function mergeOfficialWords(target: Dict, found: Word[], failed: string[]): { next: Dict; summary: ImportResultSummary } {
+  const next = cloneDeep(target)
+  const existsSet = new Set(next.words.map(w => w.word.toLowerCase()))
+  let added = 0
+  let skipped = 0
+  found.forEach(word => {
+    const key = word.word.toLowerCase()
+    if (existsSet.has(key)) {
+      skipped++
+      return
+    }
+    next.words.push(word)
+    existsSet.add(key)
+    added++
+  })
+  next.length = next.words.length
+  return {
+    next,
+    summary: {
+      successCount: added,
+      officialCount: added,
+      customCount: 0,
+      importMode: 'official',
+      skippedCount: skipped,
+      failedItems: failed,
+      pendingFailedWords: failed.length ? createFailedWordRows(failed) : undefined,
+      type: 'word',
+    },
+  }
+}
+
+/** 提交:自定义 xlsx → 解析合并;官方文件/手动输入 → 查词后合并,查不到的进失败列表 */
+async function submitWordImport() {
+  if (importing.value || importingCustom.value) return
+  if (hasCustomFile.value) {
+    importingCustom.value = true
+    try {
+      const customWords = await parseCustomXlsxWordFile(selectedCustomFile.value!)
+      const target = await persistTarget()
+      const result = mergeCustomWords(target, customWords)
+      if (!result) return
+      completeImport(result.next, result.summary)
+    } catch (e: any) {
+      Toast.error(e?.message || '导入失败,请稍后重试')
+    } finally {
+      importingCustom.value = false
+    }
+    return
+  }
+  importing.value = true
+  try {
+    let words: string[] = []
+    if (hasManualInput.value) {
+      words = manualWords.value
+    } else if (selectedFile.value) {
+      words = await parseWordFile(selectedFile.value)
+    } else {
+      return
+    }
+    if (!words.length) {
+      Toast.warning('没有可导入的单词')
+      return
+    }
+    // 逐词在已加载词库中查词条;查不到的进失败列表(结果页可再次导入/放弃/导入空白)
+    const found: Word[] = []
+    const failed: string[] = []
+    words.forEach(w => {
+      const local = findWordInLoadedDicts(w)
+      if (local) found.push(local)
+      else failed.push(w)
+    })
+    const target = await persistTarget()
+    const result = mergeOfficialWords(target, found, failed)
+    completeImport(result.next, result.summary)
+  } catch (e: any) {
+    Toast.error(e?.message || '导入失败,请稍后重试')
+  } finally {
+    importing.value = false
+  }
+}
+
+/** 结果页:再次导入勾选的失败单词(查不到的留在失败列表) */
+async function retryFailedImport() {
+  if (retryingFailed.value) return
+  const rows = getCheckedFailedRows()
+  if (!rows.length) return Toast.warning('请先勾选要再次导入的单词')
+  retryingFailed.value = true
+  try {
+    const found: Word[] = []
+    const stillFailed: string[] = []
+    rows.forEach(row => {
+      const local = findWordInLoadedDicts(row.word)
+      if (local) found.push(local)
+      else stillFailed.push(row.word)
+    })
+    const result = mergeOfficialWords(runtimeStore.editDict, found, stillFailed)
+    if (result.summary.successCount > 0) {
+      upsertTarget(result.next)
+    }
+    const prev = importSummary.value
+    updateImportSummary({
+      successCount: (prev?.successCount ?? 0) + result.summary.successCount,
+      officialCount: (prev?.officialCount ?? 0) + result.summary.officialCount,
+      skippedCount: (prev?.skippedCount ?? 0) + result.summary.skippedCount,
+      pendingFailedWords: stillFailed.length ? createFailedWordRows(stillFailed) : undefined,
+      failedItems: stillFailed,
+    })
+  } catch (e: any) {
+    Toast.error(e?.message || '再次导入失败,请稍后重试')
+  } finally {
+    retryingFailed.value = false
+  }
+}
+
+/** 结果页:放弃未收录的单词,完成导入 */
+function abandonFailedImport() {
+  updateImportSummary({
+    pendingFailedWords: undefined,
+    failedItems: [],
+  })
+  Toast.success('已放弃未收录单词,导入完成')
+}
+
+/** 结果页:把失败单词作为空白词条直接导入(不含释义,后续可在详情页补充) */
+async function importBlankFailedWords() {
+  if (importingBlank.value) return
+  const rows = getCheckedFailedRows()
+  if (!rows.length) return Toast.warning('请先勾选要导入的单词')
+  importingBlank.value = true
+  try {
+    const blankWords = rows.map(row => getDefaultWord({ word: row.word, custom: true }))
+    const result = mergeCustomWords(runtimeStore.editDict, blankWords)
+    if (!result) return
+    upsertTarget(result.next)
+    const prev = importSummary.value
+    updateImportSummary({
+      customCount: (prev?.customCount ?? 0) + result.summary.customCount,
+      skippedCount: (prev?.skippedCount ?? 0) + result.summary.skippedCount,
+      pendingFailedWords: undefined,
+      failedItems: [],
+    })
+  } catch (e: any) {
+    Toast.error(e?.message || '导入失败,请稍后重试')
+  } finally {
+    importingBlank.value = false
   }
 }
 </script>

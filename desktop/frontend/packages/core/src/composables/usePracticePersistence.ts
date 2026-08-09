@@ -112,6 +112,9 @@ function serializePracticeWordCache(data: PracticeWordCache | null): PracticeWor
 
 function restorePracticeWordCache(data: PracticeWordCacheStored | null): PracticeWordCache | null {
   if (!data) return null
+  // 跨词典会话直接丢弃:练习缓存是全局单键,不校验会把 A 词典的未完成会话
+  // 恢复到 B 词典下(结算时用旧会话推进当前词典进度、落错统计)
+  if (typeof data.dictId === 'string' && data.dictId !== useBaseStore().sdict.id) return null
   if (!isCompactPracticeWordCache(data)) {
     if (!data.taskWords?.new.length && !data.taskWords?.review.length) return null
     return data
@@ -131,7 +134,8 @@ function restorePracticeWordCache(data: PracticeWordCacheStored | null): Practic
 
   const words = restoreWords(data.practiceData?.wordsStr ?? [], wordMap)
   const wrongWords = restoreWords(data.practiceData?.wrongWordsStr ?? [], wordMap)
-  const index = words.length ? Math.min(data.practiceData.index, words.length - 1) : 0
+  // 容错:practiceData 缺失(格式升级/半损坏)时回退到 0,避免恢复流程崩溃
+  const index = words.length ? Math.min(data.practiceData?.index ?? 0, words.length - 1) : 0
 
   const practiceData: PracticeData = {
     ...data.practiceData,
@@ -151,7 +155,14 @@ export function usePracticeWordPersistence() {
 
   async function load(): Promise<PracticeWordCache | null> {
     const res = await fetch()
-    return res ?? restorePracticeWordCache(await getPracticeWordCacheLocal())
+    if (res) return res
+    try {
+      return restorePracticeWordCache(await getPracticeWordCacheLocal())
+    } catch {
+      // 缓存损坏(格式升级/半损坏):丢弃并清理,避免恢复流程崩溃
+      await setPracticeWordCacheLocal(null)
+      return null
+    }
   }
 
   async function fetch(): Promise<PracticeWordCache | null> {
@@ -169,6 +180,10 @@ export function usePracticeWordPersistence() {
 
   async function save(data: PracticeWordCache | null) {
     const compactData = serializePracticeWordCache(data)
+    if (compactData) {
+      // 记录所属词典:恢复时校验,防止把别的词典的未完成会话恢复到当前词典下
+      compactData.dictId = useBaseStore().sdict.id
+    }
     await dataSync.saveLocalAndSync(SyncDataType.practice_word, compactData)
   }
 

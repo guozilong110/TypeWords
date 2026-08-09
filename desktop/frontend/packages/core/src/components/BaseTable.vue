@@ -154,10 +154,16 @@ function cancelSearch() {
 async function getData() {
   if (props.request) {
     loading2 = true
-    let { list, total } = await props.request(params)
-    params.list = list
-    params.total = total
-    loading2 = false
+    try {
+      let { list, total } = await props.request(params)
+      params.list = list
+      params.total = total
+    } catch {
+      params.list = []
+      params.total = 0
+    } finally {
+      loading2 = false // 请求抛错时也复位,否则遮罩常驻
+    }
   } else {
     params.list = props.list ?? []
   }

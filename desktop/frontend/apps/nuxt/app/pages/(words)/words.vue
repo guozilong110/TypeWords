@@ -475,6 +475,8 @@ onMounted(() => document.addEventListener('click', onDocumentClick))
 onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 
 // 点击下拉列表项 → 显示该词详情(索引词需按需加载词库文件)
+// 请求序号:快速连续点不同词时,慢请求的返回不覆盖快请求(与查词弹窗竞态修复同款)
+let suggestionToken = 0
 async function selectSuggestion(item: SuggestionItem) {
   // 不填充搜索框,保持用户输入原样
   showSuggestions = false
@@ -482,17 +484,22 @@ async function selectSuggestion(item: SuggestionItem) {
   searchLoading = true
   searchNotFound = false
   searchResult = null
+  const token = ++suggestionToken
   try {
     const local = allLoadedWords.find(w => w.word?.toLowerCase() === item.word.toLowerCase())
     if (local) {
+      if (token !== suggestionToken) return
       searchResult = local
     } else if (item.dictFile) {
       const words = await loadDictWords(item.dictFile)
+      // 竞态守卫:await 期间用户点了别的词,丢弃过期结果
+      if (token !== suggestionToken) return
       searchResult = words.find(w => w.word?.toLowerCase() === item.word.toLowerCase()) ?? null
     }
+    if (token !== suggestionToken) return
     searchNotFound = !searchResult
   } finally {
-    searchLoading = false
+    if (token === suggestionToken) searchLoading = false
   }
 }
 

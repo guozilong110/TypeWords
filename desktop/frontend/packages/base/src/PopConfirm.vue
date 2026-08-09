@@ -53,14 +53,21 @@ export default {
     }
   },
   mounted() {
-    window.addEventListener('click', () => {
-      this.show = false
-    })
-    window.addEventListener('keydown', () => {
-      this.show = false
-    })
+    window.addEventListener('click', this.onWindowClick)
+    window.addEventListener('keydown', this.onWindowKey)
+  },
+  beforeUnmount() {
+    // 必须移除:否则全局监听随实例数无限累积(回调还持有已卸载组件引用)
+    window.removeEventListener('click', this.onWindowClick)
+    window.removeEventListener('keydown', this.onWindowKey)
   },
   methods: {
+    onWindowClick() {
+      this.show = false
+    },
+    onWindowKey() {
+      this.show = false
+    },
     getTextStyle(type) {
       const styles = {
         normal: {

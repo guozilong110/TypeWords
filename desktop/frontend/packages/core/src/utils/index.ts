@@ -283,22 +283,29 @@ export async function checkAndUpgradeSaveSetting(val: any) {
 }
 
 //筛选未自定义的词典，未自定义的词典不需要保存单词，用的时候再下载
+// ⚠️ 返回值只读(仅用于 JSON.stringify 序列化),勿修改返回对象中的字段——
+// 浅拷贝下非 words/articles/sections 字段与 store 共享引用,修改会污染 store。
 export function shakeCommonDict(n: BaseState): BaseState {
-  let data: BaseState = cloneDeep(n)
-  data.word.bookList.map((v: Dict) => {
-    // 非自定义词典的 words 冗余且可能巨大(ECDICT 84 万词),导出/备份不携带,加载时按 url 重新获取
-    if (!v.custom) v.words = []
-  })
-  data.article.bookList.map((v: Dict) => {
-    if (!v.custom && !v.system) v.articles = []
-    else {
-      v.articles.map(a => {
-        //运行时再生成
-        a.sections = []
-      })
-    }
-  })
-  return data
+  // 浅拷贝结构剥离大词库数据:原实现先 cloneDeep 整个 store(ECDICT 84 万词数百 MB)
+  // 再清空 words——为清空先复制,白做巨额深拷贝,退出自动备份会卡死 5 秒超时导致备份静默丢失
+  return {
+    ...n,
+    word: {
+      ...n.word,
+      bookList: n.word.bookList.map((v: Dict) => {
+        // 非自定义词典的 words 冗余且可能巨大(ECDICT 84 万词),导出/备份不携带,加载时按 url 重新获取
+        return v.custom ? v : { ...v, words: [] }
+      }),
+    },
+    article: {
+      ...n.article,
+      bookList: n.article.bookList.map((v: Dict) => {
+        if (!v.custom && !v.system) return { ...v, articles: [] }
+        // 自定义/系统词典保留文章,但清空 sections(运行时再生成)
+        return { ...v, articles: v.articles.map(a => ({ ...a, sections: [] })) }
+      }),
+    },
+  }
 }
 
 /**
@@ -582,7 +589,7 @@ export function getShufflePracticeWords<T extends { word: string }>(
 ) {
   const range = normalizeShufflePracticeRange(setting.range, words.length)
   const total = Math.max(0, Math.floor(Number(setting.total) || 0))
-  const candidates = words.slice(range.start, range.end).filter(v => !ignoreSet?.has(v.word))
+  const candidates = words.slice(range.start, range.end).filter(v => !ignoreSet?.has(v.word.toLowerCase()))
 
   return {
     range,

@@ -54,13 +54,28 @@ let openTime = $ref(Date.now())
 let maskRef = $ref<HTMLDivElement>(null)
 let modalRef = $ref<HTMLDivElement>(null)
 let id = Date.now()
+// 卸载守卫:组件卸载后 close() 不再 emit(防止对已卸载组件触发 setTimout 回调)
+let isUnmounted = false
+// 关闭动画定时器 + 关闭中标志:快速"关闭→重开"(≤300ms)时旧定时器不会把新弹窗自动关掉
+let closeTimers: ReturnType<typeof setTimeout>[] = []
+let closing = false
+
+function clearCloseTimers() {
+  for (const t of closeTimers) clearTimeout(t)
+  closeTimers = []
+}
 
 async function close() {
+  if (isUnmounted || closing) return
+  closing = true
+  clearCloseTimers() // 二次进入(如 emit false 触发 watch 再调 close)时清掉上一次的待执行定时器
   if (!visible) {
+    closing = false
     return
   }
   if (props.beforeClose) {
     if (!(await props.beforeClose())) {
+      closing = false
       return
     }
   }
@@ -71,21 +86,26 @@ async function close() {
     closeTime += 500 - stayTime
   }
   return new Promise(resolve => {
-    setTimeout(() => {
-      maskRef?.classList.toggle('bounce-out')
-      modalRef?.classList.toggle('bounce-out')
-    }, 500 - stayTime)
+    closeTimers.push(
+      setTimeout(() => {
+        maskRef?.classList.toggle('bounce-out')
+        modalRef?.classList.toggle('bounce-out')
+      }, 500 - stayTime)
+    )
 
-    setTimeout(() => {
-      emit('update:modelValue', false)
-      emit('close')
-      visible = false
-      resolve(true)
-      let rIndex = modalStack.findIndex(item => item.id === id)
-      if (rIndex > -1) {
-        modalStack.splice(rIndex, 1)
-      }
-    }, closeTime)
+    closeTimers.push(
+      setTimeout(() => {
+        emit('update:modelValue', false)
+        emit('close')
+        visible = false
+        closing = false
+        resolve(true)
+        let rIndex = modalStack.findIndex(item => item.id === id)
+        if (rIndex > -1) {
+          modalStack.splice(rIndex, 1)
+        }
+      }, closeTime)
+    )
   })
 }
 
@@ -94,6 +114,7 @@ watch(
   n => {
     if (n) {
       id = Date.now()
+      openTime = Date.now() // 重开时重置停留计时,否则二次打开的防闪烁延迟失效
       modalStack.push({ id, close })
       zIndex = 999 + modalStack.length
       visible = true
@@ -113,12 +134,16 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (props.modelValue === undefined) {
-    visible = false
-    let rIndex = modalStack.findIndex(item => item.id === id)
-    if (rIndex > -1) {
-      modalStack.splice(rIndex, 1)
-    }
+  isUnmounted = true
+  clearCloseTimers() // 卸载时清掉待执行的关闭动画定时器
+  // 无条件移除 keydown:弹窗打开状态下被 v-if 卸载时,visible 的 watch 不会执行
+  // else 分支,不移除会导致监听泄漏(回调引用已卸载实例)
+  window.removeEventListener('keydown', onKeyDown)
+  // 无条件从弹窗栈移除:受控弹窗(v-model)在打开状态被卸载时,残留条目会让
+  // Escape 命中已卸载实例、新弹窗 Esc 失效,zIndex 也持续虚高
+  const rIndex = modalStack.findIndex(item => item.id === id)
+  if (rIndex > -1) {
+    modalStack.splice(rIndex, 1)
   }
 })
 

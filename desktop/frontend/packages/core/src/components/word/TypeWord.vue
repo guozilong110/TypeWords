@@ -17,7 +17,7 @@ import SentenceHightLightWord from './SentenceHightLightWord.vue'
 import ClickableEnglishText from './ClickableEnglishText.vue'
 import ClickableWord from './ClickableWord.vue'
 import WordLookupPopover from './WordLookupPopover.vue'
-import { _nextTick, last, normalizeWord, useNav } from '../../utils'
+import { normalizeWord, useNav } from '../../utils'
 import { BaseButton, BaseIcon, Textarea, Toast, Tooltip, VolumeIcon } from '@english-learner/base'
 import { useI18n } from 'vue-i18n'
 import { useWordOptions } from '../../hooks/dict.ts'
@@ -64,10 +64,6 @@ let wordRepeatCount = 0
 // 记录单词完成的时间戳，用于防止同时按下最后一个字母和空格键时跳过单词
 let wordCompletedTime = 0
 let jumpTimer: ReturnType<typeof setTimeout> | null = null
-let cursor = $ref({
-  top: 0,
-  left: 0,
-})
 const settingStore = useSettingStore()
 const store = useBaseStore()
 
@@ -199,7 +195,6 @@ function resetState(trigger: WordPlayTrigger) {
     playWord(trigger, { resetIcon: trigger === WordPlayTrigger.NewWord })
   }
   updateCurrentWordInfo()
-  checkCursorPosition()
 }
 
 // 监听输入变化，更新当前单词信息
@@ -243,6 +238,10 @@ onUnmounted(() => {
 })
 
 function clearJumpTimer() {
+  if (repeatTimer) {
+    clearTimeout(repeatTimer)
+    repeatTimer = null
+  }
   if (!jumpTimer) {
     return
   }
@@ -250,8 +249,13 @@ function clearJumpTimer() {
   jumpTimer = null
 }
 
+// 循环重打定时器句柄:卸载/切词时清理,防卸载后仍修改状态
+let repeatTimer: ReturnType<typeof setTimeout> | null = null
+
 function repeat() {
-  setTimeout(() => {
+  if (repeatTimer) clearTimeout(repeatTimer)
+  repeatTimer = setTimeout(() => {
+    repeatTimer = null
     wrong = input = ''
     wordRepeatCount++
     inputLock = false
@@ -702,40 +706,6 @@ function mouseleave() {
   }, 50)
 }
 
-watch([() => input, () => showFullWord, () => settingStore.dictation], checkCursorPosition)
-
-//检测光标位置
-function checkCursorPosition() {
-  _nextTick(() => {
-    let cursorOffset
-    if (isTypingSentence()) {
-      cursorOffset = { top: 0, left: 0 }
-    } else {
-      cursorOffset = { top: 0, left: -3 }
-    }
-    // 选中目标元素
-    const cursorEl = document.querySelector(`.cursor`)
-    const inputList = document.querySelectorAll(`.l`)
-    if (!typingWordRef || !cursorEl) return
-    const typingWordRect = typingWordRef.getBoundingClientRect()
-
-    if (inputList.length) {
-      let inputRect = last(Array.from(inputList)).getBoundingClientRect()
-      cursor = {
-        top: inputRect.top + inputRect.height - cursorEl.clientHeight - typingWordRect.top + cursorOffset.top,
-        left: inputRect.right - typingWordRect.left + cursorOffset.left,
-      }
-    } else {
-      const letter = document.querySelector(`.letter`)
-      let elRect = letter ? letter.getBoundingClientRect() : null
-      if (!elRect) return
-      cursor = {
-        top: elRect.top + elRect.height - cursorEl.clientHeight - typingWordRect.top + cursorOffset.top,
-        left: elRect.left - typingWordRect.left + cursorOffset.left,
-      }
-    }
-  })
-}
 
 useEventsByWatch(
   [

@@ -500,45 +500,55 @@ function goImportPage() {
 async function exportXlsxData() {
   if (exportXlsxLoading) return
   exportXlsxLoading = true
-  const XLSX = await loadJsLib('XLSX', LIB_JS_URL.XLSX)
-  let list = runtimeStore.editDict.words
-  let filename = runtimeStore.editDict.name
-  let wb = XLSX.utils.book_new()
-  let sheetData = list.map(v => {
-    let t = word2Str(v)
-    return {
-      单词: t.word,
-      '音标①': t.phonetic0,
-      '音标②': t.phonetic1,
-      笔记: t.note,
-      翻译: t.trans,
-      例句: t.sentences,
-      短语: t.phrases,
-      近义词: t.synos,
-      同根词: t.relWords,
-      词源: t.etymology,
-    }
-  })
-  wb.Sheets['Sheet1'] = XLSX.utils.json_to_sheet(sheetData)
-  wb.SheetNames = ['Sheet1']
-  XLSX.writeFile(wb, `${filename}.xlsx`)
-  Toast.success(filename + ' ' + '导出成功！')
-  exportXlsxLoading = false
+  try {
+    const XLSX = await loadJsLib('XLSX', LIB_JS_URL.XLSX)
+    let list = runtimeStore.editDict.words
+    let filename = runtimeStore.editDict.name
+    let wb = XLSX.utils.book_new()
+    let sheetData = list.map(v => {
+      let t = word2Str(v)
+      return {
+        单词: t.word,
+        '音标①': t.phonetic0,
+        '音标②': t.phonetic1,
+        笔记: t.note,
+        翻译: t.trans,
+        例句: t.sentences,
+        短语: t.phrases,
+        近义词: t.synos,
+        同根词: t.relWords,
+        词源: t.etymology,
+      }
+    })
+    wb.Sheets['Sheet1'] = XLSX.utils.json_to_sheet(sheetData)
+    wb.SheetNames = ['Sheet1']
+    XLSX.writeFile(wb, `${filename}.xlsx`)
+    Toast.success(filename + ' ' + '导出成功！')
+  } catch {
+    Toast.error('导出失败,请稍后重试')
+  } finally {
+    exportXlsxLoading = false
+  }
 }
 
 async function exportJsonData() {
   if (exportJsonLoading) return
   exportJsonLoading = true
-  // 只改副本,不能 delete 源对象字段(否则导出一次后单词 id/custom 永久丢失,后续编辑会失败)
-  let list = runtimeStore.editDict.words.map(w => {
-    const copy = { ...w }
-    delete copy.custom
-    delete copy.id
-    return copy
-  })
-  const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' })
-  saveAs(blob, `${runtimeStore.editDict.name}.json`)
-  exportJsonLoading = false
+  try {
+    // 只改副本,不能 delete 源对象字段(否则导出一次后单词 id/custom 永久丢失,后续编辑会失败)
+    let list = runtimeStore.editDict.words.map(w => {
+      const copy = { ...w }
+      delete copy.custom
+      delete copy.id
+      return copy
+    })
+    const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' })
+    saveAs(blob, `${runtimeStore.editDict.name}.json`)
+  } catch {
+    Toast.error('导出失败,请稍后重试')
+  } finally {
+    exportJsonLoading = false
+  }
 }
 
 const dict = $computed(() => runtimeStore.editDict)

@@ -123,11 +123,17 @@ export const useBaseStore = defineStore('base', {
         .map((v: Word) => v.word.toLowerCase())
         .concat(this.simpleWords.map((v: string) => v.toLowerCase()))
     },
+    // 统一小写构建:消费方(isWordSimple/getWordStatus/练习过滤)全部用小写查询,
+    // 原大小写构建导致 Christ/Beijing 等大写词标记后过滤不掉、反复进练习
     knownWordsSet(): Set<string> {
-      return new Set<string>(this.known.words.map((v: Word) => v.word))
+      return new Set<string>(this.known.words.map((v: Word) => v.word.toLowerCase()))
     },
     allIgnoreWordsSet(): Set<string> {
-      return new Set<string>(this.known.words.map((v: Word) => v.word).concat(this.simpleWords.map((v: string) => v)))
+      return new Set<string>(
+        this.known.words
+          .map((v: Word) => v.word.toLowerCase())
+          .concat(this.simpleWords.map((v: string) => v.toLowerCase()))
+      )
     },
     sdict(): Dict {
       if (this.word.studyIndex >= 0) {

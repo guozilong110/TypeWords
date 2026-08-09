@@ -46,11 +46,12 @@ async function init() {
   dict = d
   if (!d.words.length && runtimeStore.editDict?.id === d.id) {
     loading = true
-    let r = await _getDictDataByUrl(runtimeStore.editDict)
-    d = r
+    // 用返回值重赋 dict($ref):原实现只重赋局部 d,页面显示用的 dict 仍是空对象,
+    // 词库需从 URL 加载时永远提示"没有单词可测试"
+    dict = await _getDictDataByUrl(runtimeStore.editDict)
     loading = false
   }
-  if (!dict.words.length) {
+  if (!dict?.words?.length) {
     return Toast.warning('没有单词可测试！')
   }
   if (runtimeStore.routeData?.taskWords) {
@@ -95,6 +96,7 @@ function next() {
   selectedIndex = -1
   if (no >= testWords.length) {
     nav('/words')
+    return // 最后一题跳转后直接返回,避免 index 越界访问 questions[index]
   }
   if (no < total) index++
   else {

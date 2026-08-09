@@ -35,7 +35,10 @@ export type PracticeWordCacheCompact = {
   statStoreData: PracticeState
 }
 
-export type PracticeWordCacheStored = PracticeWordCache | PracticeWordCacheCompact
+export type PracticeWordCacheStored = (PracticeWordCache | PracticeWordCacheCompact) & {
+  /** 所属词典 id:恢复时校验,防跨词典恢复错会话(旧缓存无此字段,放行) */
+  dictId?: string
+}
 
 export type PracticeArticleCache = {
   practiceData: {
@@ -89,13 +92,17 @@ async function getLocalWithMeta<T>(config: CacheConfig): Promise<LocalCacheResul
 async function getLocal<T>(config: CacheConfig): Promise<T | null> {
   const result = await getLocalWithMeta<T>(config)
   if (result?.val) {
+    // 版本不匹配的缓存视为损坏作废(历史数据 version 均为 1,不会误杀)
+    if (result.version !== config.version) return null
     if (Object.keys(result.val).length > 0) return result.val
   }
   return null
 }
 
 async function setLocal<T>(config: CacheConfig, val: T | null, updated_at: string): Promise<void> {
-  // idb 原生支持对象存储，直接存对象，无需 JSON.stringify
+  // ⚠️ 必须 stringify 后存字符串:val 里含 pinia 响应式代理(如 statStoreData: statStore.$state),
+  // IndexedDB 结构化克隆无法克隆 Proxy,直接存对象会抛 DataCloneError 导致保存失败;
+  // JSON.stringify 读取属性对 Proxy 安全(读取端兼容分支解析字符串)
   const payload: LocalCacheResult<T> = {
     version: config.version,
     val,

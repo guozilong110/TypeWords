@@ -85,9 +85,23 @@ function calSimilarity(word1: Word, word2: Word): number {
 
 /** 干扰项选取(不含正确项): 从 list 中按相似度打分选最像的 maxCount-1 个 */
 function pickDistractors(word: Word, list: Word[], maxCount: number): { word: Word, similarity: number }[] {
+    // 大词库(ECDICT 84 万词)每次切词全量打分卡顿数秒:先按词长 ±2 过滤 + 均匀抽样降采样。
+    // fuzz 分本身带随机性,抽样后候选仍是"像"的词,四选一体验一致
+    let pool = list
+    if (list.length > 1000) {
+        const len = word.word.length
+        const lenFiltered = list.filter(item => Math.abs(item.word.length - len) <= 2)
+        if (lenFiltered.length >= 300) {
+            // 均匀间隔抽样到 ~500 个(不打乱原数组,分布均匀)
+            const step = lenFiltered.length / 500
+            pool = lenFiltered.filter((_, i) => Math.floor(i / step) !== Math.floor((i + 1) / step))
+        }
+        // lenFiltered < 300 时保持全量,避免小候选池里干扰项质量下降
+    }
+
     let similarityList: { word: Word, similarity: number }[] = []
-    for (let i = 0; i < list.length; i++) {
-        const item = list[i]
+    for (let i = 0; i < pool.length; i++) {
+        const item = pool[i]
 
         const wordStr = word.word.toLowerCase()
         const itemStr = item.word.toLowerCase()

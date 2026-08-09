@@ -200,20 +200,24 @@ export function useEventListener(type: string, listener: EventListenerOrEventLis
         if (isComposing) return
         const target = event.target as HTMLInputElement | null
         if (!target) return
-        let char = ''
-        let keyCode = -1
         if (event.inputType === 'deleteContentBackward') {
-          char = 'Backspace'
-          keyCode = 8
-        }else {
-          char = target?.value?.slice(-1) || (event as any).data?.slice(-1)
-          keyCode = char === ' ' ? 32 : char.toUpperCase().charCodeAt(0)
+          if (emitWindowsKeys.has('Backspace')) return
+          emitInputKeys.add('Backspace')
+          setTimeout(() => emitInputKeys.delete('Backspace'), 30)
+          dispatchSyntheticKey({ key: 'Backspace', code: charToCode('Backspace'), keyCode: 8 })
+          target.value = ' '
+          return
         }
-        if (emitWindowsKeys.has(char)) return
-        // console.log('handleInput', Date.now(), emitWindowsKeys)
-        emitInputKeys.add(char)
-        setTimeout(() => emitInputKeys.delete(char), 30)
-        dispatchSyntheticKey({ key: char, code: charToCode(char), keyCode })
+        // 输入/粘贴:event.data 含本次全部新字符,逐字符派发
+        // (原实现只取最后一个字符,粘贴多字符时中间字符全部丢失)
+        const data = (event as any).data ?? target?.value?.slice(-1) ?? ''
+        for (const char of data) {
+          if (!char || emitWindowsKeys.has(char)) continue
+          emitInputKeys.add(char)
+          setTimeout(() => emitInputKeys.delete(char), 30)
+          const keyCode = char === ' ' ? 32 : char.toUpperCase().charCodeAt(0)
+          dispatchSyntheticKey({ key: char, code: charToCode(char), keyCode })
+        }
         target.value = ' '
       }
 

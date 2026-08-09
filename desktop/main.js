@@ -69,22 +69,34 @@ function rotateLog() {
 function writeLog(level, source, message) {
   try {
     if (!message) return
-    fs.mkdirSync(LOG_DIR, { recursive: true })
+    // 目录在 app ready 时创建一次(whenReady 内),这里不再每次 mkdirSync
     if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > LOG_MAX_SIZE) rotateLog()
     const line = `[${new Date().toISOString()}] [${level}] [${source}] ${String(message).slice(0, 2000)}\n`
     fs.appendFileSync(LOG_FILE, line)
   } catch {}
 }
 
+// 兜底:主进程未捕获异常/拒绝写日志,避免静默失败(异常路径不再抛默认弹窗)
+process.on('uncaughtException', (err) => {
+  writeLog('error', 'main', `uncaughtException: ${err?.stack || err?.message || err}`)
+})
+process.on('unhandledRejection', (reason) => {
+  writeLog('error', 'main', `unhandledRejection: ${reason?.stack || reason?.message || reason}`)
+})
+
 // 渲染进程 console → 日志(1=warning 2=error 3=info;0=log 也记,便于排查性能)
 // 过滤已知噪音:打字逐字母调试、store 订阅调试、vxe 组件提示(源码已清,这里兜底防复发)
 const NOISY_LOG_PATTERNS = [/^letter\s/, /\$subscribe/, /^\[vxe table/, /Electron Security Warning/]
 
+// Chrome console-message 的 level 枚举:0=log 1=info 2=warning 3=error 4=debug
+const CONSOLE_LEVEL_LABELS = { 0: 'log', 1: 'info', 2: 'warning', 3: 'error', 4: 'debug' }
+
 function forwardRendererConsole(win) {
+  // 兼容两种签名:新签名(event 对象,含 message/level)与旧签名(event, level, message)
   win.webContents.on('console-message', (event, level, message) => {
-    const msg = String(message || '')
+    const msg = String(event?.message ?? message ?? '')
     if (NOISY_LOG_PATTERNS.some(p => p.test(msg))) return
-    const label = ['log', 'warning', 'error', 'info'][level] || String(level)
+    const label = CONSOLE_LEVEL_LABELS[event?.level ?? level] || 'log'
     writeLog(label, 'renderer', msg)
   })
 }
@@ -202,15 +214,19 @@ function createWindow() {
 
   // 退出自动备份:窗口关闭前先通知渲染进程导出数据,完成后才真正关闭
   // 渲染进程卡死/无响应时 5 秒超时强制关闭,避免用户关不掉窗口
+  // allowClose/backupPending 挂在窗口实例上(不用模块级变量):macOS 关窗重建后
+  // 不会残留"已放行"状态,新窗口关闭时自动备份照常执行
   let backupPending = false
+  win.__allowClose = false
   win.on('close', (e) => {
-    if (allowClose || isSmokeTest || backupPending) return
-    e.preventDefault()
+    if (win.__allowClose || isSmokeTest) return
+    e.preventDefault() // 备份挂起中也阻止默认关闭(双击 X / Alt+F4 不绕过备份)
+    if (backupPending) return
     backupPending = true
     win.webContents.send('request-auto-backup')
     setTimeout(() => {
-      if (!allowClose) {
-        allowClose = true
+      if (!win.__allowClose) {
+        win.__allowClose = true
         win.destroy()
       }
     }, 5000)
@@ -219,23 +235,33 @@ function createWindow() {
   return win
 }
 
-// 窗口是否已放行关闭(自动备份完成后置 true)
-let allowClose = false
-
-// 自动备份写入:渲染进程把备份 JSON 内容发过来,主进程写到「文档/EnglishLearner备份」目录
+// 自动备份写入:渲染进程把备份 JSON 内容发过来,主进程写到自动备份目录
+// (必须走 getAutoBackupDir():开发模式用独立目录,否则开发版备份会混入安装版目录,
+// 且"保留 7 份"清理会误删安装版用户最旧的真实备份)
 ipcMain.on('auto-backup-save', (event, content) => {
   try {
-    if (typeof content !== 'string' || !content) return
-    const dir = path.join(app.getPath('documents'), 'EnglishLearner备份')
+    // 内容大小上限 50MB:防异常调用方/外部页写入任意大小文件塞满磁盘
+    if (typeof content !== 'string' || !content || content.length > 50 * 1024 * 1024) return
+    const dir = getAutoBackupDir()
     fs.mkdirSync(dir, { recursive: true })
-    // 文件名带时间戳,字典序即时间序
-    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
+    // 文件名带时间戳+毫秒,字典序即时间序(同秒多次关闭不会互相覆盖)
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19) + '-' + String(Date.now() % 1000).padStart(3, '0')
     const file = path.join(dir, `EnglishLearner-备份-${stamp}.json`)
-    fs.writeFileSync(file, content, 'utf-8')
-    // 只保留最近 7 份备份
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort()
+    // 原子写入:先写 .tmp 再 rename,中途崩溃不留截断的损坏备份
+    const tmpFile = file + '.tmp'
+    fs.writeFileSync(tmpFile, content, 'utf-8')
+    try { fs.unlinkSync(file) } catch {} // 同秒重复写入时先清旧文件,避免 rename 失败
+    fs.renameSync(tmpFile, file)
+    // 只保留最近 7 份备份(前缀精确匹配,手工放入的 .json 不会被误删)
+    const files = fs.readdirSync(dir).filter(f => f.startsWith('EnglishLearner-备份-') && f.endsWith('.json')).sort()
     while (files.length > 7) {
       fs.unlinkSync(path.join(dir, files.shift()))
+    }
+    // 顺带清理崩溃残留的 .tmp(同步写入下不会误删正在写的那份)
+    for (const f of fs.readdirSync(dir)) {
+      if (f.startsWith('EnglishLearner-备份-') && f.endsWith('.json.tmp')) {
+        fs.unlinkSync(path.join(dir, f))
+      }
     }
   } catch (err) {
     writeLog('error', 'main', `自动备份写入失败: ${err?.message || err}`)
@@ -246,30 +272,41 @@ ipcMain.on('auto-backup-save', (event, content) => {
 ipcMain.handle('read-log', () => {
   try {
     if (!fs.existsSync(LOG_FILE)) return ''
-    // 只返回最近 300KB,避免渲染卡顿
-    const stat = fs.statSync(LOG_FILE)
-    const offset = Math.max(0, stat.size - 300 * 1024)
-    return fs.readFileSync(LOG_FILE, 'utf-8').slice(offset)
+    // 定位读尾部 ~300KB,避免全量加载(日志最大 5MB)
+    const fd = fs.openSync(LOG_FILE, 'r')
+    try {
+      const size = fs.fstatSync(fd).size
+      const offset = Math.max(0, size - 300 * 1024)
+      const buf = Buffer.alloc(size - offset)
+      // readSync 不保证读满,按实际读入字节数截取,避免尾部拼入 \0 垃圾字节
+      const n = fs.readSync(fd, buf, 0, buf.length, offset)
+      return buf.subarray(0, n).toString('utf-8')
+    } finally {
+      fs.closeSync(fd)
+    }
   } catch {
     return ''
   }
 })
 
-ipcMain.handle('open-log-dir', () => {
+ipcMain.handle('open-log-dir', async () => {
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true })
-    shell.openPath(LOG_DIR)
-    return true
+    // shell.openPath 成功时 resolve 空串,失败时 resolve 错误信息
+    return (await shell.openPath(LOG_DIR)) === ''
   } catch {
     return false
   }
 })
 
 // 渲染进程备份完成 → 放行关闭
-ipcMain.on('auto-backup-done', () => {
-  allowClose = true
-  const win = BrowserWindow.getAllWindows()[0]
-  if (win) win.close()
+ipcMain.on('auto-backup-done', (event) => {
+  // 用 event.sender 精确定位发起备份的窗口(不用 getAllWindows()[0],多窗口时不会关错)
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (win) {
+    win.__allowClose = true
+    win.close()
+  }
 })
 
 // 自动备份目录(文档/EnglishLearner备份;开发模式用独立目录,避免与安装版备份互相覆盖)
@@ -285,7 +322,7 @@ ipcMain.handle('auto-backup-list', () => {
     if (!fs.existsSync(dir)) return []
     return fs
       .readdirSync(dir)
-      .filter(f => f.endsWith('.json'))
+      .filter(f => f.startsWith('EnglishLearner-备份-') && f.endsWith('.json'))
       .map(f => {
         const stat = fs.statSync(path.join(dir, f))
         return { name: f, mtime: stat.mtimeMs }
@@ -299,10 +336,11 @@ ipcMain.handle('auto-backup-list', () => {
 // 读取某个自动备份文件内容(校验文件名,防目录穿越)
 ipcMain.handle('auto-backup-read', (event, name) => {
   try {
-    if (typeof name !== 'string' || !name.endsWith('.json')) return null
+    if (typeof name !== 'string' || !name.startsWith('EnglishLearner-备份-') || !name.endsWith('.json')) return null
     const dir = getAutoBackupDir()
     const file = path.join(dir, name)
-    if (!file.startsWith(dir)) return null
+    // 目录校验用 dirname 精确比较,字符串前缀比较会被「备份-evil」之类同前缀目录绕过
+    if (path.dirname(file) !== dir) return null
     return fs.readFileSync(file, 'utf-8')
   } catch {
     return null
@@ -403,7 +441,9 @@ function edgeTtsSynthesize(text, cfg) {
       finish(null)
       return
     }
-    const voice = (cfg && typeof cfg.voice === 'string' && cfg.voice) || EDGE_TTS_VOICE
+    // voice 白名单校验(字母数字连字符,如 zh-CN-XiaoxiaoNeural):直接拼 SSML,裸拼可注入 <audio> 等标签
+    const voice =
+      (cfg && typeof cfg.voice === 'string' && /^[A-Za-z0-9-]+$/.test(cfg.voice) && cfg.voice) || EDGE_TTS_VOICE
     const rate = speedToRate(cfg && cfg.lengthScale)
     const chunks = []
 
@@ -478,8 +518,10 @@ ipcMain.handle('fetch-word-audio', async (event, word, type) => {
   try {
     const w = encodeURIComponent(String(word || '').slice(0, 100))
     const t = Number(type) === 1 ? 1 : 2
+    // 10 秒超时:网络挂起时若无限等待,渲染侧 3 路预加载并发池会被永久占满
     const res = await net.fetch(`https://dict.youdao.com/dictvoice?audio=${w}&type=${t}`, {
       bypassCustomProtocolHandlers: true,
+      signal: AbortSignal.timeout(10000),
     })
     if (!res.ok) return null
     const buf = Buffer.from(await res.arrayBuffer())
@@ -489,6 +531,10 @@ ipcMain.handle('fetch-word-audio', async (event, word, type) => {
     return null
   }
 })
+
+// 日志目录确保存在:必须在启动日志(writeLog)之前,否则首次安装时目录不存在,
+// appendFileSync 抛错被 catch 吞掉,启动日志/早期崩溃日志静默丢失
+fs.mkdirSync(LOG_DIR, { recursive: true })
 
 // 单实例:重复启动时聚焦已有窗口
 if (!app.requestSingleInstanceLock()) {
@@ -512,12 +558,18 @@ if (!app.requestSingleInstanceLock()) {
         return new Response('Not Found', { status: 404 })
       }
 
-      let pathname = decodeURIComponent(url.pathname)
+      let pathname
+      try {
+        pathname = decodeURIComponent(url.pathname)
+      } catch {
+        return new Response('Bad Request', { status: 400 }) // 非法 % 编码
+      }
       if (pathname === '/') pathname = '/index.html'
 
-      // 防目录穿越:解析后的路径必须位于 webRoot 内
+      // 防目录穿越:必须位于 webRoot 目录内(带路径分隔符精确比较,
+      // 字符串前缀匹配会被 dist-evil 等 webRoot 同名前缀兄弟目录绕过)
       const resolved = path.normalize(path.join(webRoot, pathname))
-      if (!resolved.startsWith(webRoot)) {
+      if (resolved !== webRoot && !resolved.startsWith(webRoot + path.sep)) {
         return new Response('Forbidden', { status: 403 })
       }
 

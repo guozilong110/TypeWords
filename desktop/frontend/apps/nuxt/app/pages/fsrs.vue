@@ -26,7 +26,8 @@ onMounted(async () => {
 const fsrsList = computed(() => {
   return Object.entries(baseStore.fsrsData)
     .filter(([word, card]) => {
-      return type === 'today' ? dayjs.utc(card.last_review).local().isToday() : true
+      // last_review 为 null(从未复习过)时 dayjs.utc(null) 会返回当前时间导致误判"今日",需先判空
+      return type === 'today' ? (card?.last_review ? dayjs.utc(card.last_review).local().isToday() : false) : true
     })
     .map(([word, card]: [string, any]) => ({
       word,
@@ -84,7 +85,8 @@ const weekSummary = $computed(() => {
 const weekReviewCards = $computed(() => {
   let n = 0
   for (const card of Object.values(baseStore.fsrsData) as any[]) {
-    if (dayjs.utc(card.last_review).isAfter(weekStart)) n++
+    // 空值守卫:last_review 缺失时 dayjs.utc(undefined) 取当前时间,会误计为"本周"
+    if (card?.last_review && dayjs.utc(card.last_review).isAfter(weekStart)) n++
   }
   return n
 })

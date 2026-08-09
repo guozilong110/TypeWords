@@ -94,6 +94,12 @@ function getDefaultPracticeData(origin?: Partial<PracticeData>, val?: Partial<Pr
 }
 let data = $ref<PracticeData>(getDefaultPracticeData({}))
 
+// excludeWords/allWrongWords/wrongWords 的 Set 镜像:循环内 findIndex/includes 是 O(n×m),
+// Set 查询 O(1);computed 依赖数组迭代,push/splice 自动触发重建
+const excludeWordsSet = $computed(() => new Set(data.excludeWords))
+const allWrongWordsSet = $computed(() => new Set(data.allWrongWords))
+const wrongWordsSet = $computed(() => new Set(data.wrongWords.map(v => v.word.toLowerCase())))
+
 watch(
   () => data.words,
   () => {
@@ -226,25 +232,8 @@ const onvisibilitychange = async () => {
         Toast.success('已自动恢复计时')
       }, 1500)
     }
-    if (runtimeStore.globalLoading) return
-    runtimeStore.globalLoading = true
-    try {
-      //todo 这里如果另一台机器学完了，这里的d可能为空
-      const d = await wordPersistence.fetch()
-      if (d) {
-        taskWords = Object.assign(taskWords, d.taskWords)
-        data = Object.assign(data, d.practiceData)
-        statStore.$patch(d.statStoreData)
-        // 恢复缓存后，若计时状态为"未暂停"，需重新开启一个新片段
-        // 因为上次保存到现在有时间间隔，不能续在旧片段上
-        if (!statStore.timerPaused) {
-          const now = Date.now()
-          statStore.segments.push([now, now])
-        }
-      }
-    } finally {
-      runtimeStore.globalLoading = false
-    }
+    // 桌面版无远端同步(pullIfRemoteNewer 恒返回 null),此前的"从远端恢复会话"
+    // 分支是死代码,已删除;若未来恢复跨端同步需在此补回 fetch 恢复逻辑
   } else {
     statStore.pauseTimer('auto_visibility')
   }
@@ -268,6 +257,7 @@ onUnmounted(() => {
   savePracticeData.cancel?.() // 取消防抖中未触发的保存,避免卸载后定时器二次写入
   savePracticeDataIns('onUnmounted').catch(e => console.error('退出时保存练习状态失败', e)) // 保存进行中的练习状态(内部自带未开始/已结算守卫,无需判缓存)
   timer && clearInterval(timer)
+  if (simpleJumpTimer) clearTimeout(simpleJumpTimer) // 标记"已掌握"的跳词定时器,卸载后不再触发 next
   watchRefList.map(v => v?.stop())
   cancelWordPracticeAudio() // 退出练习页:停止正在播放的单词/翻译语音,避免回到主页还在读
   clearTtsCaches() // 退出练习页:先刷盘再清内存缓存
@@ -492,7 +482,13 @@ async function complete() {
 
     //如果 shuffle 数组不为空，就说明是复习，不用修改 lastLearnIndex
     if (settingStore.wordPracticeMode !== WordPracticeMode.Shuffle) {
-      store.sdict.lastLearnIndex = store.sdict.lastLearnIndex + statStore.newWordNumber
+      // 重学本组(点过"重学"):结算时回退到组起点而不是推进,只回退一次(幂等,不重复扣减进度)
+      if (repeatCurrentGroup) {
+        store.sdict.lastLearnIndex = Math.max(0, store.sdict.lastLearnIndex - statStore.newWordNumber)
+        repeatCurrentGroup = false
+      } else {
+        store.sdict.lastLearnIndex = store.sdict.lastLearnIndex + statStore.newWordNumber
+      }
       // 检查已忽略的单词数量，是否全部完成
       let ignoreList = [store.allIgnoreWords, store.knownWords][settingStore.ignoreSimpleWord ? 0 : 1]
       // 忽略单词数:用 Set 匹配,避免「忽略列表 × 剩余词库」双重循环
@@ -518,7 +514,8 @@ async function complete() {
 
     // 落卡:跳过/忽略的词不落卡(不进复习队列,落卡纯属白算且会卡死结算——
     // 一直跳过时 wrongTimesMap 可达上万条,每次 setWordCard 都有 FSRS 计算 + 响应式写入)
-    const skipped = new Set(data.excludeWords)
+    // 统一小写:excludeWords 存原大小写,而 wrongTimesMap 的键是小写,不统一则 Beijing 等大写词被跳过仍会落卡
+    const skipped = new Set(data.excludeWords.map(w => w.toLowerCase()))
     for (const [word, wrongTimes] of Object.entries(data.wrongTimesMap)) {
       if (skipped.has(word)) continue
       let rating = data.ratingMap[word]
@@ -526,10 +523,11 @@ async function complete() {
         setWordCard(rating, word)
       } else {
         // 复习词(已有卡且已到期)答错 → 遗忘,直接 Again 重学,间隔重置;
+        // 答对的复习词按错误次数正常换算评级(0 次错误 = Easy),否则复习队列永不缩减;
         // 新词仍按错误次数换算评级
         const card = store.fsrsData[word]
         const isReviewWord = card && dayjs(card.due).valueOf() <= Date.now()
-        setWordCard(isReviewWord ? Rating.Again : getGradeByWrongTimes(wrongTimes), word)
+        setWordCard(isReviewWord && wrongTimes > 0 ? Rating.Again : getGradeByWrongTimes(wrongTimes), word)
       }
     }
 
@@ -541,6 +539,10 @@ async function complete() {
       // store 的 $subscribe 防抖仍会尝试落盘;此处兜底提示,界面不卡死
       console.error('结算数据保存失败', e)
       Toast.error('结算数据保存失败,请检查磁盘空间后重试')
+      // 结算失败也清掉会话缓存:不清的话下次进入会恢复旧会话再结算一次(统计重复落库、进度二次推进)
+      try {
+        await wordPersistence.clear()
+      } catch {}
     }
 
     let trackData = {
@@ -586,7 +588,7 @@ function next(isTyping: boolean = true, ignoreLoop = false) {
   if (isTyping) statStore.inputWordNumber++
   if (settingStore.wordPracticeMode === WordPracticeMode.Free) {
     if (data.index === data.words.length - 1) {
-      data.wrongWords = data.wrongWords.filter(v => !data.excludeWords.includes(v.word))
+      data.wrongWords = data.wrongWords.filter(v => !excludeWordsSet.value.has(v.word))
       if (data.wrongWords.length) {
         pushNav()
         data.isTypingWrongWord = true
@@ -686,8 +688,7 @@ function next(isTyping: boolean = true, ignoreLoop = false) {
 //如果单词是已掌握的/或者主动跳过的，则略过
 function checkWordIsNeedNext(word: Word) {
   if (!word.word) return false
-  let rIndex = data.excludeWords.findIndex(v => v === word.word)
-  return isWordSimple(word) || rIndex > -1
+  return isWordSimple(word) || excludeWordsSet.value.has(word.word)
 }
 
 function skipStep() {
@@ -715,7 +716,7 @@ function onTypeWrong() {
   //这里的代码暂时不能移动，因为要实时把错词加入到列表里面，从而更新toolbar里面的错词数
   //todo 后续可以优化
   let temp = word.word.toLowerCase()
-  if (!data.allWrongWords.find(v => v === temp)) {
+  if (!allWrongWordsSet.value.has(temp)) {
     data.allWrongWords.push(temp)
     statStore.wrong++
   }
@@ -723,11 +724,12 @@ function onTypeWrong() {
     store.wrong.words.push(word)
     store.wrong.length = store.wrong.words.length
   }
-  if (!data.wrongWords.find((v: Word) => v.word.toLowerCase() === temp)) {
+  if (!wrongWordsSet.value.has(temp)) {
     data.wrongWords.push(word)
   }
-  let rIndex = data.excludeWords.findIndex(v => v === word.word)
-  if (rIndex > -1) {
+  // Set 快速判断,存在才 findIndex 取下标(常见情况:排除列表没有该词 → O(1) 跳过)
+  if (excludeWordsSet.value.has(word.word)) {
+    const rIndex = data.excludeWords.findIndex(v => v === word.word)
     data.excludeWords.splice(rIndex, 1)
   }
   savePracticeData('wrong')
@@ -781,6 +783,9 @@ async function savePracticeDataIns(where?) {
 
 const savePracticeData = debounce(savePracticeDataIns, 500)
 
+// 本次会话是否点了"重学本组":结算时才扣减进度(幂等),避免重复点击重复扣减
+let repeatCurrentGroup = false
+
 function repeat() {
   savePracticeData.cancel?.() // 先取消防抖中未触发的保存,避免旧会话缓存回灌覆盖 clear
   wordPersistence.clear()
@@ -788,13 +793,15 @@ function repeat() {
   let ignoreSet = [store.allIgnoreWordsSet, store.knownWordsSet][settingStore.ignoreSimpleWord ? 0 : 1]
   //随机练习单独处理
   if (settingStore.wordPracticeMode === WordPracticeMode.Shuffle) {
-    temp.review = shuffle(temp.review.filter(v => !ignoreSet.has(v.word)))
+    temp.review = shuffle(temp.review.filter(v => !ignoreSet.has(v.word.toLowerCase())))
   } else {
-    //将学习进度减回去
-    store.sdict.lastLearnIndex = store.sdict.lastLearnIndex - statStore.newWordNumber
+    // 标记重学本组,进度回退延后到结算时(complete)执行:
+    // 原实现点击即扣减——重复点击会重复扣减永久丢进度,首个分组还会扣成负数
+    // 导致 getCurrentStudyWord 越界崩溃。改后只记标记,结算时回退一次。
+    repeatCurrentGroup = true
     //排除已掌握单词
-    temp.new = temp.new.filter(v => !ignoreSet.has(v.word))
-    temp.review = temp.review.filter(v => !ignoreSet.has(v.word))
+    temp.new = temp.new.filter(v => !ignoreSet.has(v.word.toLowerCase()))
+    temp.review = temp.review.filter(v => !ignoreSet.has(v.word.toLowerCase()))
   }
   emitter.emit(EventKey.resetWord)
   initData(temp)
@@ -858,9 +865,12 @@ function play() {
   typingRef?.play?.()
 }
 
+// 标记"已掌握"后跳下一个词的定时器句柄:卸载时清理,防组件卸载后仍触发 next/complete
+let simpleJumpTimer: ReturnType<typeof setTimeout> | null = null
+
 function toggleWordSimpleWrapper() {
   if (!isWordSimple(word)) {
-    setTimeout(() => next(false))
+    simpleJumpTimer = setTimeout(() => next(false))
   }
   toggleWordSimple(word)
   let rIndex = data.excludeWords.findIndex(v => v === word.word)
@@ -895,9 +905,13 @@ async function continueStudy() {
   } else {
     //这里判断是否显示结算弹框，如果显示了结算弹框的话，就不用加进度了
     if (!isComplete) {
+      // 直接"下一组"视为放弃重学本组:正常推进并清除重学标记
+      repeatCurrentGroup = false
       store.sdict.lastLearnIndex = store.sdict.lastLearnIndex + statStore.newWordNumber
-      // 忽略单词数
-      const ignoreCount = ignoreList.filter(word => store.sdict.words.some(w => w.word.toLowerCase() === word)).length
+      // 忽略单词数:用 Set 匹配,避免「忽略列表 × 剩余词库」双重循环
+      // (与 complete() 内同款写法一致;ignoreList 可上万,词库 84 万词,双重循环会卡死"下一组")
+      const remainingSet = new Set(store.sdict.words.slice(store.sdict.lastLearnIndex).map(w => w.word.toLowerCase()))
+      const ignoreCount = ignoreList.filter(word => remainingSet.has(word)).length
       // 如果lastLearnIndex已经超过可学单词数，则判定完成
       if (store.sdict.lastLearnIndex + ignoreCount >= store.sdict.length) {
         store.sdict.complete = true

@@ -22,8 +22,8 @@ const myRules = $computed(() => {
 const validate = (rules, isBlur = false) => {
   error = ''
   const val = formModel.value[props.prop]
-  //为空并且是非主动触发检验的情况下，不检验
-  if (isBlur && val.trim() === '') {
+  //为空并且是非主动触发检验的情况下，不检验(null/undefined 时也跳过,避免 trim 崩溃)
+  if (isBlur && (val == null || val.toString().trim() === '')) {
     return true
   }
   for (const rule of rules) {

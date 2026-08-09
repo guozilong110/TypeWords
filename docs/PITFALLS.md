@@ -207,3 +207,33 @@ scoped 样式 `.foo[data-v-父hash]` 需要元素带**父组件**的 data-v 属�
 **根因**:`TranslationList` 的 `pos-space` 参数**默认 true**(词性固定 `min-width: 3rem` 占位,为 WordDetail 对齐设计)。旧 `WordItem` 传了 `:pos-space="false"`,新建的 `WordFlowList` 漏传 → 词性被撑到 3rem 宽,文字只占 ~30px,余出空白。
 
 **教训**:① 用 `flex-wrap` 做"多列自适应"布局时,item 显式宽度会被内容(`min-width:auto`)撑破,列数不可控——需要稳定列数就固定为单列/网格,别指望 wrap 列数稳定 ② 复用带"占位对齐"语义的组件参数(pos-space 类),新调用处必须显式传参,漏传默认值 = 隐蔽的布局空白 ③ 共享组件新调用点,先对照旧调用点的参数列表逐一核对。
+
+## 39. IndexedDB 直存含 pinia 响应式代理的对象 → DataCloneError,练习进度保存静默失败(2026-08-10)
+
+**现象**:练习页每次切词(500ms 防抖保存)都弹「练习状态保存失败,请检查磁盘空间」,日志里是 `[object DOMException]`,磁盘空间正常。将缓存写入从 `JSON.stringify` 改为"直接存对象"后出现。
+
+**根因**:`cache.ts` 的 `setLocal` 原本 `set(key, JSON.stringify(payload))`;改成 `set(key, payload)` 后,IndexedDB 内部用**结构化克隆**(structuredClone)存对象,而 `practiceData.statStoreData` 是 `statStore.$state` —— **pinia 的响应式代理(Proxy)无法被结构化克隆**,抛 `DataCloneError`。JSON.stringify 读取属性对 Proxy 是安全的,所以改前一直正常。缓存注释"idb 原生支持对象存储,无需 stringify"是误导——**对象里的值必须是纯 JSON 才能直存**。
+
+**修复**:恢复 stringify 存字符串(读取端兼容分支保留),注释写明原因。
+
+**教训**:① 优化"去掉多余序列化"前,先确认数据里有没有响应式代理/函数/循环引用——`$state`/`$ref`/reactive 对象**绝对不能直接进 IndexedDB**;② 保存链路报 DOMException 先怀疑克隆问题(`err.name === 'DataCloneError'`),再看配额;③ 缓存注释声称的"可以直存对象"必须与数据来源(是不是 pinia/reactive)对照验证,不能只看注释。
+
+## 40. Set 小写化重构只改构建端,查询端漏改 → 大写词过滤"换了个方向"失效(2026-08-10)
+
+**现象**:修复"大写词(Christ/Beijing)标记已掌握后过滤不掉"时,把 `knownWordsSet`/`allIgnoreWordsSet` 改成小写构建。改后测试发现:**练习任务生成路径(下一组/复习填充/随机练习/重学)里大写词过滤反而失效了**——修复前这些路径是能过滤的。
+
+**根因**:这两个 Set 的消费者分两派:一派用小写查询(`isWordSimple`、`getWordStatus`、fsrsData 的 key),另一派用**原大小写查询**(`ignoreSet.has(item.word)`、`getShufflePracticeWords`、repeat)。Set 从原大小写改成小写后,第一派修复、第二派反向失效。只改了一头。
+
+**修复**:全量 grep `ignoreSet.has(`/`knownWordsSet.has(` 等调用点,查询参数统一 `.toLowerCase()`,与 Set 构建口径一致;`fsrsData` 填充的本地 set 也统一小写。
+
+**教训**:① 大小写规范化是**全链路**改动:Set 构建端 + 每一个查询端必须同批改,先 grep 所有 `.has(`/`.find(` 调用点列清单再动手;② 改完用含大写词的用例验证两条路径(任务生成 + 练习内判断),不能只测一条;③ "修复方向相反"的回归特征:同一个问题修完 A 处,另一处行为从正常变异常——改动前先盘点所有消费方。
+
+## 41. 删除函数只删定义与 watch,漏删另一处调用 → 构建通过、运行时 ReferenceError(2026-08-10)
+
+**现象**:删除 TypeWord.vue 的 `checkCursorPosition` 死代码(watch + 函数定义)后构建通过、e2e 通过,但**每次切词**日志报 `ReferenceError: checkCursorPosition is not defined`,且同页面练习状态保存失败(异常中断了组件状态链路,牵连保存)。
+
+**根因**:该函数还有**第二处调用**(resetState 里,切词重置逻辑),grep 时只盯着 watch 和定义,漏了这处。Vue SFC 里 `script setup` 的函数被模板/事件引用时,未定义的引用在**编译期不报错**(运行时才抛),所以构建全绿。
+
+**修复**:删除调用点;顺带把"练习状态保存失败"与 ReferenceError 的关联也查了——两者同时出现是异常中断导致的状态不一致。
+
+**教训**:① 删除函数/变量前,`grep -rn "函数名" 全项目` 列出**所有**引用点(定义、watch、模板、事件、调用),逐一确认;② Vue 运行时错误(ReferenceError/TypeError)先看是不是**删除残留**,构建通过 ≠ 没有引用残留;③ 日志里两个看似无关的错误同时出现,可能是同根因(一处异常中断后续逻辑),先找共同触发点。

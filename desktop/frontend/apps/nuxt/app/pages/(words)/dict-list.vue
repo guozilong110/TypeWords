@@ -55,14 +55,15 @@ let showSearchInput = $ref(false)
 let searchKey = $ref('')
 
 const searchList = computed<any[]>(() => {
-  if (searchKey) {
+  // 空值守卫:词库列表未加载完(isFetching 中)时 dict_list 可能为 undefined;tags 字段可能缺失
+  if (searchKey && dict_list.value) {
     let s = searchKey.toLowerCase()
     return dict_list.value.filter(item => {
       return (
-        item.enName.toLowerCase().includes(s) ||
-        item.name.toLowerCase().includes(s) ||
-        item.category.toLowerCase().includes(s) ||
-        item.tags.join('').replace('所有', '').toLowerCase().includes(s) ||
+        item?.enName?.toLowerCase().includes(s) ||
+        item?.name?.toLowerCase().includes(s) ||
+        item?.category?.toLowerCase().includes(s) ||
+        (item?.tags?.join('') ?? '').replace('所有', '').toLowerCase().includes(s) ||
         item?.url?.toLowerCase?.().includes?.(s)
       )
     })

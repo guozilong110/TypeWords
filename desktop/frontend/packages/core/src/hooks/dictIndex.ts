@@ -9,6 +9,9 @@ export type DictIndexItem = { w: string; d: string; t?: string }
 let dictIndex: DictIndexItem[] | null = null
 let dictIndexPromise: Promise<DictIndexItem[]> | null = null
 const dictWordsCache = new Map<string, Word[]>()
+// 小写索引 Map:84.9 万条线性 find(每次点击数百 ms)改为 O(1) 查询。
+// 构建一次约 1s(一次性,随索引加载),常驻 ~60-80MB,换来查词/搜索建议从卡顿到毫秒级
+let dictIndexMap: Map<string, DictIndexItem> | null = null
 
 /**
  * 获取内嵌词库索引(首次调用才 fetch,之后内存缓存;优先加载压缩版 .z,体积约 1/4)。
@@ -21,6 +24,8 @@ export function ensureDictIndex(): Promise<DictIndexItem[]> {
       try {
         // 压缩版索引用 fetchDictJson 解压;不存在时回退旧版纯 JSON
         dictIndex = await fetchDictJson('/dicts/index.json.z').catch(() => fetch('/dicts/index.json').then(r => r.json()))
+        // 一次性构建小写 Map(首次加载的额外开销,之后每次查询 O(1))
+        dictIndexMap = new Map(dictIndex.map(item => [item.w.toLowerCase(), item]))
       } catch {
         dictIndex = []
       }
@@ -35,6 +40,11 @@ export async function loadDictWords(dictFile: string): Promise<Word[]> {
   if (!dictWordsCache.has(dictFile)) {
     const words = await fetchDictJson(`/dicts/en/word/${dictFile}`)
     dictWordsCache.set(dictFile, words)
+    // 只保留最近 3 个大词库文件(每个 ECDICT 量级可占数百 MB),防止多文件累积到 1GB+
+    // ponytail: 按插入序剔除的简化 LRU,命中不更新顺序;若出现交替查冷文件场景再改真 LRU
+    if (dictWordsCache.size > 3) {
+      dictWordsCache.delete(dictWordsCache.keys().next().value)
+    }
   }
   return dictWordsCache.get(dictFile)!
 }
@@ -50,8 +60,9 @@ export function findWordInLoadedDicts(word: string): Word | null {
 export async function findWordGlobally(word: string): Promise<Word | null> {
   const local = findWordInLoadedDicts(word)
   if (local) return local
-  const index = await ensureDictIndex()
-  const item = index?.find(it => it.w.toLowerCase() === word.toLowerCase())
+  await ensureDictIndex()
+  // Map O(1) 查询,替代原 84.9 万条线性 find(每次点击查词数百 ms 卡顿)
+  const item = dictIndexMap?.get(word.toLowerCase())
   if (!item?.d) return null
   const words = await loadDictWords(item.d)
   return words.find(w => w.word?.toLowerCase() === word.toLowerCase()) ?? null

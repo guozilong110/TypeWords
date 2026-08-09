@@ -143,7 +143,7 @@ const encouragementText = $computed(() => {
             <div class="flex gap-space flex-wrap max-w-150">
               <span
                 class="bg-[var(--bg-card-secend)] py-1 px-2 rounded-md"
-                v-for="item in Object.entries(practiceData.wrongTimesMap)
+                v-for="item in Object.entries(practiceData?.wrongTimesMap ?? {})
                   .sort((a, b) => b[1] - a[1])
                   .slice(0, 10)"
               >
