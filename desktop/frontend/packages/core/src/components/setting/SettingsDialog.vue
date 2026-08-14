@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { defineAsyncComponent, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getDefaultSettingState, useSettingStore } from '../../stores/setting'
 import { getShortcutKey, useEventListener } from '../../hooks/event'
 import {
@@ -49,6 +49,9 @@ type HistoryBackupMeta = HistoryBackupIndexItem & {
 
 const show = defineModel<boolean>({ default: false })
 const { t } = useI18n()
+
+// 功能介绍浮窗(布局 default.vue provide;首次启动引导与帮助页入口共用)
+const openIntro = inject<(v?: boolean) => void>('openIntro', () => {})
 
 function open() {
   show.value = true
@@ -617,8 +620,11 @@ async function copyLog() {
 
           <!--          帮助(常见问题)-->
           <div v-if="tabIndex === 7">
-            <div class="font-bold text-2xl mb-6">{{ '常见问题解答' }}</div>
-            <div class="list">
+            <div class="flex items-center justify-between gap-4">
+              <div class="font-bold text-2xl">{{ '常见问题解答' }}</div>
+              <BaseButton type="info" size="small" @click="openIntro()">{{ '功能介绍' }}</BaseButton>
+            </div>
+            <div class="list mt-4">
               <Collapse q="学习数据保存在哪里？">
                 <div class="text">
                   所有数据保存在本机（%APPDATA%\EnglishLearner），卸载 / 覆盖安装都不会丢失。软件完全本地运行，不需要联网登录。

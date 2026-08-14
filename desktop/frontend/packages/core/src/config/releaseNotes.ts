@@ -20,6 +20,18 @@ export const RELEASE_NOTES: ReleaseVersion[] = [
   {
     version: APP_VERSION.version,
     date: '2026-08-14',
+    title: '功能引导与更新入口',
+    summary: '首次启动精简引导、功能介绍完整版、检查更新入口、宣传文案事实修正',
+    features: [
+      { type: 'new', title: '首次启动引导', desc: '新装/升级后自动弹出「新手上路」精简引导(封面+数据亮点+核心玩法一屏看完);「开始学习」直达下一步:还没选词库的引导去词库大厅,已有词库直接进练习页' },
+      { type: 'new', title: '功能介绍完整版', desc: '设置-帮助新增「功能介绍」按钮,随时回看完整版介绍(界面预览/记忆曲线/词库/细节特色全板块)' },
+      { type: 'new', title: '检查更新入口', desc: '设置-更新日志顶部新增「检查更新」卡片,一键跳转 GitHub 发布页下载最新版,覆盖安装学习数据不丢' },
+      { type: 'fix', title: '宣传文案事实修正', desc: '查词覆盖数字统一为 84.9 万、修正"设置窗口可拖拽"表述、双语语音标注"需联网",避免误导' },
+    ],
+  },
+  {
+    version: APP_VERSION.version,
+    date: '2026-08-14',
     title: '标题栏融合与例句跳过',
     summary: '窗口一体化外观、双击空格跳过例句、标题栏遮挡与配色修复',
     features: [

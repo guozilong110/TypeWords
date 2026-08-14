@@ -1,6 +1,12 @@
 <script setup lang="ts">
 // EnglishLearner 自己的更新日志
+import { PROJECT_RELEASES } from '../../config/env'
 let logList = [
+  {
+    date: '2026/08/14',
+    content:
+      'v0.3.32 功能引导与更新入口:①首次启动引导——新装/升级后自动弹出「新手上路」精简引导(封面+数据亮点+核心玩法,一屏看完不劝退),点「开始学习」直达下一步(还没选词库的引导去词库大厅,已有词库直接进练习页);设置-帮助新增「功能介绍」按钮,随时可回看完整版介绍(界面预览/记忆曲线/词库/细节全板块);②检查更新——更新日志页顶部新增「检查更新」入口,一键跳转 GitHub 发布页下载最新版,覆盖安装数据不丢;③细节修正——查词覆盖数字统一为 84.9 万、修正"设置窗口可拖拽"的表述、双语语音标注"需联网"不再误导',
+  },
   {
     date: '2026/08/14',
     content:
@@ -199,6 +205,16 @@ let logList = [
 
 <template>
   <div>
+    <!-- 检查更新:跳转 GitHub 发布页下载新版安装包(覆盖安装数据不丢) -->
+    <div class="update-entry">
+      <div class="update-entry-text">
+        <div class="update-entry-title">{{ '检查更新' }}</div>
+        <div class="update-entry-desc">{{ '访问发布页下载最新版本,覆盖安装即可,学习数据自动保留' }}</div>
+      </div>
+      <a class="update-entry-btn" :href="PROJECT_RELEASES" target="_blank" rel="noopener">{{ '打开发布页' }} ↗</a>
+    </div>
+    <div class="line"></div>
+
     <div class="log-item" v-for="item in logList" :key="item.date">
       <div class="mb-2">
         <div>
@@ -212,6 +228,55 @@ let logList = [
 
 <style scoped lang="scss">
 .log-item {
+  border-bottom: 1px solid var(--color-input-border);
+  margin-bottom: 1rem;
+}
+
+// 检查更新入口卡片
+.update-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-info) 30%, transparent);
+  margin-bottom: 0.9rem;
+
+  .update-entry-title {
+    font-weight: 700;
+    color: var(--color-main-text);
+  }
+
+  .update-entry-desc {
+    margin-top: 0.2rem;
+    font-size: 0.78rem;
+    color: var(--color-sub-text);
+    line-height: 1.6;
+  }
+
+  .update-entry-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #fff;
+    background: var(--color-info);
+    padding: 0.5rem 1.1rem;
+    border-radius: 999px;
+    text-decoration: none;
+    transition: transform 0.2s ease, filter 0.2s ease;
+
+    &:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.1);
+    }
+  }
+}
+
+.line {
   border-bottom: 1px solid var(--color-input-border);
   margin-bottom: 1rem;
 }

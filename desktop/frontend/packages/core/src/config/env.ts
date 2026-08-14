@@ -2,6 +2,8 @@
 import { ShortcutKey, WordPracticeMode, WordPracticeStage } from '../types/enum.ts'
 
 export const GITHUB = 'https://github.com/zyronon/TypeWords'
+// 本项目发布页:设置-更新日志「检查更新」入口跳转,同学/开源用户获取新版安装包
+export const PROJECT_RELEASES = 'https://github.com/Aliboder/english-learner/releases'
 export const APP_NAME = 'EnglishLearner'
 export const IS_DEV = import.meta.env.MODE === 'development'
 
@@ -46,7 +48,7 @@ export const SoundFileOptions = [
 ]
 export const APP_VERSION = {
   key: 'english-learner-app-version',
-  version: 10, // v0.3.31:升号后启动检测 isNew 提示功能更新,查看后标记 seen 不再提示
+  version: 11, // v0.3.32:升号后启动检测 isNew 提示功能更新,查看后标记 seen 不再提示
 }
 export const SAVE_DICT_KEY = {
   key: 'typing-word-dict',

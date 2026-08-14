@@ -2,12 +2,13 @@
 import useTheme from '@english-learner/core/hooks/theme.ts'
 import { applyWordFont } from '@english-learner/core/hooks/font.ts'
 import { useSettingStore } from '@english-learner/core/stores/setting.ts'
-import { onMounted, provide, watch } from 'vue'
+import { nextTick, onMounted, provide, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useInit } from '@english-learner/core/composables/useInit.ts'
 import WordCollectPopover from '@english-learner/core/components/word/WordCollectPopover.vue'
 import SettingsDialog from '@english-learner/core/components/setting/SettingsDialog.vue'
+import IntroDialog from '@english-learner/core/components/IntroDialog.vue'
 import { useExport } from '@english-learner/core/hooks/export'
 import { ensurePersistedCacheLoaded } from '@english-learner/core/hooks/preloadTts.ts'
 import { Toast } from '@english-learner/base'
@@ -18,6 +19,15 @@ const { setTheme } = useTheme()
 const settingStore = useSettingStore()
 const init = useInit()
 let settingsDialogRef = $ref()
+// 首次启动介绍浮窗(设置-帮助的「功能介绍」入口也复用它)
+let introDialogRef = $ref()
+
+/** 打开功能介绍浮窗(首次启动引导 / 设置-帮助入口共用);
+    mode: onboarding = 首次启动精简引导,full = 帮助入口完整版(默认) */
+function openIntro(mode: 'onboarding' | 'full' = 'full') {
+  introDialogRef?.open?.(mode)
+}
+provide('openIntro', openIntro)
 
 // 桌面版(Electron)才有自定义标题栏;浏览器预览无 window.desktop 则跳过
 // (typeof 判断兼容 SSR 预渲染:Node 环境无 window,直接返回 false)
@@ -58,6 +68,10 @@ watch(
     if (settingStore.alwaysOnTop) window.desktop?.setAlwaysOnTop?.(true)
     // 标题栏按钮配色:启动时按已保存主题设置(此时 theme 可能未变,theme watch 不触发)
     syncTitleBarOverlay()
+    // 首次启动:自动弹出精简引导浮窗(settingStore.first 默认 true,看完/开始后置 false 持久化)
+    if (settingStore.first) {
+      nextTick(() => introDialogRef?.open?.('onboarding'))
+    }
   }
 )
 
@@ -159,6 +173,7 @@ onMounted(() => {
     </div>
     <WordCollectPopover />
     <SettingsDialog ref="settingsDialogRef" />
+    <IntroDialog ref="introDialogRef" />
   </div>
 </template>
 
