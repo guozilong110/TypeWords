@@ -146,6 +146,14 @@ function createWindow() {
     minHeight: 640,
     autoHideMenuBar: true,
     title: 'EnglishLearner',
+    // 自定义标题栏(2026-08-14):隐藏系统标题栏,应用内容延伸到窗口顶部,视觉融合;
+    // titleBarOverlay 保留系统原生窗口控制按钮(最小化/最大化/关闭),拖拽/双击最大化/右键菜单等原生行为不变
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#e6e8eb', // 浅色主题主背景(与 main.scss --color-primary 一致)
+      symbolColor: '#5b5b5b', // 窗口按钮图标色(浅色主题)
+      height: 40,
+    },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -512,6 +520,24 @@ ipcMain.handle('set-always-on-top', (event, flag) => {
   const win = BrowserWindow.getAllWindows()[0]
   win?.setAlwaysOnTop(!!flag)
   return true
+})
+
+// 自定义标题栏(2026-08-14):渲染进程切换深浅色主题时同步窗口按钮 overlay 配色
+// (否则按钮颜色停留在初始浅色,深色模式下按钮区域与界面割裂)
+ipcMain.handle('set-titlebar-overlay', (event, opts) => {
+  try {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win || typeof opts !== 'object' || opts === null) return false
+    win.setTitleBarOverlay({
+      color: typeof opts.color === 'string' ? opts.color : '#e6e8eb',
+      symbolColor: typeof opts.symbolColor === 'string' ? opts.symbolColor : '#5b5b5b',
+      height: 40,
+    })
+    return true
+  } catch (err) {
+    writeLog('error', 'main', `set-titlebar-overlay 失败: ${err?.message || err}`)
+    return false
+  }
 })
 
 ipcMain.handle('fetch-word-audio', async (event, word, type) => {

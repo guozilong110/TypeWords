@@ -47,4 +47,8 @@ contextBridge.exposeInMainWorld('desktop', {
   setAlwaysOnTop(flag) {
     return ipcRenderer.invoke('set-always-on-top', flag)
   },
+  // 自定义标题栏:切换深浅色时同步窗口控制按钮配色(opts: { color, symbolColor })
+  setTitleBarOverlay(opts) {
+    return ipcRenderer.invoke('set-titlebar-overlay', opts)
+  },
 })

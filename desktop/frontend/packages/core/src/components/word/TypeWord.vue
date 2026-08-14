@@ -360,7 +360,30 @@ function select(e, index: number) {
 
 let currentPracticeSentenceIndex = $ref(-1)
 
+// 双击空格跳过剩余例句:记录上次空格按下时间(毫秒),间隔小于阈值视为双击
+let lastSpaceTime = 0
+const DBL_SPACE_MS = 300
+
+/** 双击空格跳过剩余例句:把例句下标推到句数上限,completeTypeWord 走完成分支切到下一个单词 */
+function skipRemainingSentences() {
+  lastSpaceTime = 0 // 重置,防三连空格误触发
+  const sentenceCount = Math.min(props.word.sentences.length, Math.max(1, settingStore.practiceSentenceCount || 0))
+  currentPracticeSentenceIndex = sentenceCount - 1
+  completeTypeWord(false)
+}
+
 async function onTyping(e: KeyboardEvent) {
+  // 双击空格跳过剩余例句:先于 waitClear 判断(第一次空格可能触发错字 waitClear,第二次会被拦截)
+  // !e.repeat:排除长按空格产生的系统重复 keydown,避免按住空格误触发跳过
+  if (e.code === 'Space' && !e.repeat && settingStore.dblSpaceSkipSentence && isTypingSentence()) {
+    const now = Date.now()
+    if (lastSpaceTime && now - lastSpaceTime < DBL_SPACE_MS) {
+      skipRemainingSentences()
+      return
+    }
+    lastSpaceTime = now
+  }
+
   if (waitClear) {
     return
   }

@@ -339,7 +339,7 @@ onUnmounted(() => {
 // 顶部固定工具栏:固定页面最顶部,居中限宽(与练习区一致),进度条与按钮同宽组合
 .top-toolbar {
   position: fixed;
-  top: 0;
+  top: var(--titlebar-height, 0px); // 桌面版自定义标题栏高度(40px)下方;浏览器预览无标题栏则贴顶
   left: 50%;
   transform: translateX(-50%);
   width: min(var(--toolbar-width), calc(100vw - 2rem));

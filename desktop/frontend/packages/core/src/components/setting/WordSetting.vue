@@ -108,6 +108,9 @@ const simpleWords = $computed({
     <SettingItem v-if="settingStore.practiceSentence" title="例句纯字母输入" desc="开启:只需输入例句中的字母,空格/标点/数字自动跳过;关闭:需输入完整语句(含空格和标点)">
       <Switch v-model="settingStore.practiceSentenceLettersOnly" />
     </SettingItem>
+    <SettingItem v-if="settingStore.practiceSentence" title="双击空格跳过例句" desc="例句跟打中,快速按两次空格,跳过当前单词剩余例句,直接进入下一个单词(单按空格仍只切下一句)">
+      <Switch v-model="settingStore.dblSpaceSkipSentence" />
+    </SettingItem>
     <SettingItem title="单词循环设置(仅跟写生效)" class="gap-0!">
       <RadioGroup v-model="settingStore.repeatCount">
         <Radio :value="1" size="default">1</Radio>

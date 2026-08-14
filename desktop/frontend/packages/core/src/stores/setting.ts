@@ -59,6 +59,7 @@ export interface SettingState {
   practiceSentence: boolean // 练习例句
   practiceSentenceCount: number // 例句练习数量(每个单词跟打几条,默认 3)
   practiceSentenceLettersOnly: boolean // 例句纯字母输入模式(true=只需输入字母,空格/标点/数字自动跳过;false=完整语句逐字符输入)
+  dblSpaceSkipSentence: boolean // 例句跟打中双击空格跳过剩余例句直接切下一词
 
   fsrsEasyLimit: number // 小于等于fsrsEasyLimit的卡片会评估为Easy
   fsrsGoodLimit: number // 小于等于fsrsEasyLimit且小于等于fsrsHardLimit的卡片会评估为Good
@@ -79,6 +80,7 @@ export interface SettingState {
   wordFont: string // 全局字体(内置 MiSans 字重名,默认 'MiSans-Semibold',作用于整个界面 + 练习页)
   wordLetterSpacing: number // 练习页单词字符间距(px,换字体后可手动微调)
   alwaysOnTop: boolean // 窗口置顶(软件窗口始终显示在最上层)
+  practiceTopGap: number // 练习页内容区与窗口顶部的间距(px),设置可调(100~400)
 }
 
 export const getDefaultSettingState = (): SettingState => ({
@@ -136,6 +138,7 @@ export const getDefaultSettingState = (): SettingState => ({
   practiceSentence: false,
   practiceSentenceCount: 3,
   practiceSentenceLettersOnly: false,
+  dblSpaceSkipSentence: false,
   fsrsEasyLimit: 0,
   fsrsGoodLimit: 3,
   fsrsHardLimit: 6,

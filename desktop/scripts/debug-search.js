@@ -40,7 +40,12 @@ app.whenReady().then(() => {
       const indexFallback = path.join(webRoot, 'index.html')
       filePath = fs.existsSync(indexFallback) ? indexFallback : path.join(webRoot, '200.html')
     }
-    return net.fetch(pathToFileURL(filePath).toString(), { bypassCustomProtocolHandlers: true })
+    return net.fetch(pathToFileURL(filePath).toString(), { bypassCustomProtocolHandlers: true }).then((res) => {
+      // 强制 no-store:每次构建后跑脚本都读磁盘最新产物,避免 Chromium 磁盘缓存旧 JS/CSS
+      const headers = new Headers(res.headers)
+      headers.set('Cache-Control', 'no-store')
+      return new Response(res.body, { status: res.status, headers })
+    })
   })
 
   const win = new BrowserWindow({

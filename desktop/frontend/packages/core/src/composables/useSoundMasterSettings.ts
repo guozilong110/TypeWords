@@ -6,17 +6,6 @@ type VolumeKey = 'wordSoundVolume' | 'keyboardSoundVolume' | 'effectSoundVolume'
 
 type SpeedKey = 'wordSoundSpeed' | 'transSoundSpeed' | 'sentenceSoundSpeed'
 
-export const SOUND_VOLUME_ITEMS: { key: VolumeKey; labelKey: string }[] = [
-  { key: 'wordSoundVolume', labelKey: 'word_pronunciation' },
-  { key: 'keyboardSoundVolume', labelKey: 'keyboard_volume' },
-  { key: 'effectSoundVolume', labelKey: 'effect_volume' },
-]
-
-export const SOUND_SPEED_ITEMS: { key: SpeedKey; labelKey: string }[] = [
-  { key: 'wordSoundSpeed', labelKey: 'word_speed' },
-  { key: 'transSoundSpeed', labelKey: 'trans_speed' },
-]
-
 function createMasterControl<K extends keyof SettingState>(keys: K[]) {
   const settingStore = useSettingStore()
 

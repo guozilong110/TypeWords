@@ -16,9 +16,11 @@ let toastIdCounter = 0
 const createToastContainer = (): HTMLElement => {
   const container = document.createElement('div')
   container.className = 'toast-container'
+  // 标题栏高度(桌面版 40px,浏览器预览 0):Toast 显示在标题栏下方,避免被自定义标题栏遮挡
+  const titlebarH = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--titlebar-height')) || 0
   container.style.cssText = `
     position: fixed;
-    top: 20px;
+    top: ${titlebarH + 20}px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 9999;

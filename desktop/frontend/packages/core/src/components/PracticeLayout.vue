@@ -45,9 +45,9 @@ const wrapStyle = computed(() => ({
 
 .panel-wrap {
   position: fixed;
-  top: 0.8rem;
+  top: calc(var(--titlebar-height, 0px) + 0.8rem); // 桌面版标题栏下方(练习页词表面板不被标题栏遮挡)
   z-index: 1;
-  height: calc(100vh - 1.8rem);
+  height: calc(100vh - var(--titlebar-height, 0px) - 1.8rem);
 }
 
 @media (max-width: 1439px) {
