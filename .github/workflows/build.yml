@@ -17,7 +17,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --no-frozen-lockfile
       - run: cd frontend && pnpm install --no-frozen-lockfile
       - run: pnpm run build:web
@@ -39,7 +38,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --no-frozen-lockfile
       - run: cd frontend && pnpm install --no-frozen-lockfile
       - run: pnpm run build:web
