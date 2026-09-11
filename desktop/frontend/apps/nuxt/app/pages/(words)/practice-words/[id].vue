@@ -455,6 +455,7 @@ function wordLoop() {
 }
 
 function nextStage(originList: Word[]) {
+  Toast.info('本组已完成，按 Shift+→ 进入下一组', { duration: 5000 })
   // 全局回退:阶段切换前记录当前状态(回退可跨阶段)
   pushNav()
   //每次都判断，因为每次都可能新增已掌握的单词

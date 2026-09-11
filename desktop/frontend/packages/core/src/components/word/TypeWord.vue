@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { nextTick } from 'vue'
 import type { Question, Word } from '../../types'
 import { getDefaultWord, IdentifyMethod, ShortcutKey, WordPracticeType } from '../../types'
 import { useBaseStore, useSettingStore } from '../../stores'
@@ -598,6 +599,8 @@ function completeTypeWord(delay: boolean) {
       // 还有下一个句子
       inputLock = false
       wrong = input = ''
+      // 每条例句开始输入前先自动播放整句
+      nextTick(() => playSentence(currentPracticeSentenceIndex, { highlight: true }))
       return
     }
   }

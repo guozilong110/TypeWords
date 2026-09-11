@@ -160,7 +160,7 @@ export const getDefaultSettingState = (): SettingState => ({
   _ignoreWatch: false,
   showEtymologyAndRelWords: true,
   ttsVoice: 'zh-CN-XiaoxiaoNeural',
-  autoPlayTrans: true,
+  autoPlayTrans: false,
   limitTransSpeech: false,
   practiceAreaWidth: 870,
   testTransFontSize: 16,

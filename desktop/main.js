@@ -93,10 +93,10 @@ const CONSOLE_LEVEL_LABELS = { 0: 'log', 1: 'info', 2: 'warning', 3: 'error', 4:
 
 function forwardRendererConsole(win) {
   // 兼容两种签名:新签名(event 对象,含 message/level)与旧签名(event, level, message)
-  win.webContents.on('console-message', (event, level, message) => {
-    const msg = String(event?.message ?? message ?? '')
+  win.webContents.on('console-message', (event) => {
+    const msg = String(event?.message ?? '')
     if (NOISY_LOG_PATTERNS.some(p => p.test(msg))) return
-    const label = CONSOLE_LEVEL_LABELS[event?.level ?? level] || 'log'
+    const label = CONSOLE_LEVEL_LABELS[event?.level] || 'log'
     writeLog(label, 'renderer', msg)
   })
 }
