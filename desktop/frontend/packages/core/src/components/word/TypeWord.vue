@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick } from 'vue'
+import { playEdgeTts } from '../../hooks/sound'
 import type { Question, Word } from '../../types'
 import { getDefaultWord, IdentifyMethod, ShortcutKey, WordPracticeType } from '../../types'
 import { useBaseStore, useSettingStore } from '../../stores'
@@ -361,6 +362,15 @@ function select(e, index: number) {
 
 let currentPracticeSentenceIndex = $ref(-1)
 
+function playSentenceWord(index: number, position: number) {
+  const text = props.word.sentences?.[index]?.c ?? ''
+  const words = text.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []
+  const before = text.slice(0, position)
+  const wordIndex = (before.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []).length
+  const targetWord = words[wordIndex]
+  if (targetWord && settingStore.wordSound) playEdgeTts(targetWord, { volume: settingStore.wordSoundVolume / 100 })
+}
+
 // 双击空格跳过剩余例句:记录上次空格按下时间(毫秒),间隔小于阈值视为双击
 let lastSpaceTime = 0
 const DBL_SPACE_MS = 300
@@ -446,6 +456,7 @@ async function onTyping(e: KeyboardEvent) {
   }
   // 例句纯字母模式:例句输入中(未完成)空格/标点/数字等非字母键无操作(自动跳过,不判错不输入;例句完成后空格仍是切换键,不受影响)
   if (isSentenceLettersOnly() && e.key.length === 1 && !/[A-Za-z]/.test(e.key)) return
+  if (isTypingSentence() && input.length === 0) playSentenceWord(currentPracticeSentenceIndex, 0)
   inputLock = true
   let letter = e.key
   // console.log('letter',letter)
@@ -515,7 +526,12 @@ async function onTyping(e: KeyboardEvent) {
       wrong = letter
       playBeep()
       if (settingStore.wordSound) {
-        playWord(WordPlayTrigger.Typo, { volumeRef: targetVolumeIcon })
+        if (isTypingSentence()) {
+          const sentence = props.word.sentences?.[currentPracticeSentenceIndex]?.c ?? ''
+          const words = sentence.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []
+          const idx = (sentence.slice(0, input.length).match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []).length
+          if (words[idx]) playEdgeTts(words[idx], { volume: settingStore.wordSoundVolume / 100 })
+        } else playWord(WordPlayTrigger.Typo, { volumeRef: targetVolumeIcon })
       }
       waitClear = true
       setTimeout(() => {
