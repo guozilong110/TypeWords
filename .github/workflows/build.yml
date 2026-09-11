@@ -3,16 +3,41 @@ name: Build Desktop Apps
 on:
   workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - master
 
-defaults:
-  run:
-    working-directory: desktop
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-latest
+  cancel-in-progress: false
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Windows-x64
+            os: windows-latest
+            args: --win nsis --x64
+            filename: EnglishLearner-Windows-x64.exe
+          - platform: macOS-arm64
+            os: macos-14
+            args: --mac dmg --arm64
+            filename: EnglishLearner-macOS-arm64.dmg
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+      ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -20,56 +45,50 @@ jobs:
           version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: pnpm install --no-frozen-lockfile
-      - run: cd frontend && pnpm install --no-frozen-lockfile
+          node-version: 24
+      - run: pnpm install --no-frozen-lockfile --registry=https://registry.npmjs.org
+      - run: pnpm --dir frontend install --frozen-lockfile --registry=https://registry.npmjs.org
       - run: pnpm run build:web
-      - run: pnpm exec electron-builder --win nsis --x64
+      - name: Package installer
+        run: pnpm exec electron-builder ${{ matrix.args }} --publish never -c.artifactName=${{ matrix.filename }}
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-x64
-          path: release/*.exe
-          retention-days: 1
-          if-no-files-found: error
-
-  build-macos:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: pnpm install --no-frozen-lockfile
-      - run: cd frontend && pnpm install --no-frozen-lockfile
-      - run: pnpm run build:web
-      - run: CSC_IDENTITY_AUTO_DISCOVERY=false pnpm exec electron-builder --mac dmg --arm64
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-arm64
-          path: release/*.dmg
+          name: ${{ matrix.platform }}
+          path: desktop/release/${{ matrix.filename }}
           retention-days: 1
           if-no-files-found: error
 
   publish-latest:
-    needs: [build-windows, build-macos]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: release
           merge-multiple: true
-      - name: Publish latest release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: Latest
-          body: Automatically built latest version.
-          prerelease: true
-          make_latest: false
-          files: release/*
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify both installers
+        run: |
+          test -s release/EnglishLearner-Windows-x64.exe
+          test -s release/EnglishLearner-macOS-arm64.dmg
+      - name: Publish latest installers
+        run: |
+          set -euo pipefail
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest release/* --clobber
+          else
+            gh release create latest release/* --target "$GITHUB_SHA" --title Latest --notes "Built from $GITHUB_SHA" --latest
+          fi
+          gh api --method PATCH "repos/$GH_REPO/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true
+          gh release edit latest --title Latest --notes "Built from $GITHUB_SHA ($GITHUB_REF_NAME)" --prerelease=false --latest
+          # Remove obsolete versioned assets only after both new installers are uploaded.
+          gh release view latest --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            case "$asset" in
+              EnglishLearner-Windows-x64.exe|EnglishLearner-macOS-arm64.dmg) ;;
+              *) gh release delete-asset latest "$asset" --yes ;;
+            esac
+          done
