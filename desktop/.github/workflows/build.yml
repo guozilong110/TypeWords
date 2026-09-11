@@ -18,8 +18,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: cd frontend && pnpm install --frozen-lockfile
+      - run: pnpm install --no-frozen-lockfile
+      - run: cd frontend && pnpm install --no-frozen-lockfile
       - run: pnpm run build:web
       - run: pnpm exec electron-builder --win nsis --x64
       - uses: actions/upload-artifact@v4
@@ -40,8 +40,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: cd frontend && pnpm install --frozen-lockfile
+      - run: pnpm install --no-frozen-lockfile
+      - run: cd frontend && pnpm install --no-frozen-lockfile
       - run: pnpm run build:web
       - run: CSC_IDENTITY_AUTO_DISCOVERY=false pnpm exec electron-builder --mac dmg --arm64
       - uses: actions/upload-artifact@v4
