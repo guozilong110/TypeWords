@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { nextTick } from 'vue'
-import { playEdgeTts } from '../../hooks/sound'
 import type { Question, Word } from '../../types'
 import { getDefaultWord, IdentifyMethod, ShortcutKey, WordPracticeType } from '../../types'
 import { useBaseStore, useSettingStore } from '../../stores'
