@@ -29,6 +29,7 @@ import TranslationList from './TranslationList.vue'
 import { useOnKeyboardEventListener } from '../../hooks/event.ts'
 import { parseInflections } from '../../utils/inflections.ts'
 import { buildTransSpeechText } from '../../utils/transSpeech'
+import { lookupWord } from '../../hooks/useWordLookup'
 
 const { t: $t } = useI18n()
 
@@ -68,6 +69,7 @@ let wordCompletedTime = 0
 let jumpTimer: ReturnType<typeof setTimeout> | null = null
 const settingStore = useSettingStore()
 const store = useBaseStore()
+const playWordAudio = usePlayWordAudio()
 
 const playBeep = usePlayBeep()
 const playCorrect = usePlayCorrect()
@@ -152,6 +154,31 @@ function sentenceDisplayParts() {
     }
   }
   return parts
+}
+
+// 输入句子时仍允许点击其中的单词查词。根据点击位置取得光标附近的英文 token。
+function lookupTypedSentenceWord(e: MouseEvent) {
+  const el = e.currentTarget as HTMLElement
+  const text = el.textContent || ''
+  let offset = 0
+  const doc = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range }
+  const range = doc.caretRangeFromPoint?.(e.clientX, e.clientY)
+  if (range) {
+    // startOffset 是相对于命中的文本节点，而不是整句容器；累加前置文本节点长度。
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    let node: Node | null
+    while ((node = walker.nextNode())) {
+      if (node === range.startContainer) {
+        offset += range.startOffset
+        break
+      }
+      offset += node.textContent?.length || 0
+    }
+  }
+  const left = text.slice(0, offset).match(/[A-Za-z]+(?:['’-][A-Za-z]+)?$/)?.[0] || ''
+  const right = text.slice(offset).match(/^[A-Za-z]+(?:['’-][A-Za-z]+)?/)?.[0] || ''
+  const token = left + right
+  if (token) lookupWord(e, token, playWordAudio)
 }
 
 let isSelfAssessment = $computed(() => {
@@ -1075,7 +1102,9 @@ defineExpose({
               </div>
               <div v-else>
                 <!-- 原句回填渲染:保持原句大小写/空格/标点,输入进度用颜色表达 -->
-                <span v-for="(part, i) in sentenceDisplayParts()" :key="i" :class="part.cls">{{ part.ch }}</span>
+                <span class="typed-sentence-clickable" @click="lookupTypedSentenceWord">
+                  <span v-for="(part, i) in sentenceDisplayParts()" :key="i" :class="part.cls">{{ part.ch }}</span>
+                </span>
               </div>
               <!-- 例句朗读:点击喇叭播放(后台已预加载缓存,零等待;不自动播放) -->
               <VolumeIcon :title="'朗读例句'" :simple="true" @click="playSentence(index, { highlight: true })" />
@@ -1485,6 +1514,10 @@ defineExpose({
     background: rgba(124, 58, 237, 0.1);
     box-shadow: inset 0 0 0 1px rgba(124, 58, 237, 0.25);
   }
+}
+
+.typed-sentence-clickable {
+  cursor: pointer;
 }
 
 // 移动端适配
