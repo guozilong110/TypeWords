@@ -24,8 +24,9 @@ jobs:
       - run: pnpm exec electron-builder --win nsis --x64
       - uses: actions/upload-artifact@v4
         with:
-          name: EnglishLearner-Windows-x64
+          name: windows-x64
           path: release/*.exe
+          retention-days: 1
           if-no-files-found: error
 
   build-macos:
@@ -45,6 +46,28 @@ jobs:
       - run: CSC_IDENTITY_AUTO_DISCOVERY=false pnpm exec electron-builder --mac dmg --arm64
       - uses: actions/upload-artifact@v4
         with:
-          name: EnglishLearner-macOS-arm64
+          name: macos-arm64
           path: release/*.dmg
+          retention-days: 1
           if-no-files-found: error
+
+  publish-latest:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Publish latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest
+          body: Automatically built latest version.
+          prerelease: true
+          make_latest: false
+          files: release/*
+          token: ${{ secrets.GITHUB_TOKEN }}
