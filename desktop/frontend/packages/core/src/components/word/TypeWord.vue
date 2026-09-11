@@ -361,13 +361,33 @@ function select(e, index: number) {
 
 let currentPracticeSentenceIndex = $ref(-1)
 
-function playSentenceWord(index: number, position: number) {
+function playSentenceWord(index: number, position: number, lettersOnly = false) {
   const text = props.word.sentences?.[index]?.c ?? ''
   const words = text.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []
-  const before = text.slice(0, position)
-  const wordIndex = (before.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []).length
+  const wordIndex = lettersOnly
+    ? (() => {
+        let offset = 0
+        for (let i = 0; i < words.length; i++) {
+          if (offset === position) return i
+          offset += words[i].length
+        }
+        return -1
+      })()
+    : (text.slice(0, position).match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []).length
   const targetWord = words[wordIndex]
   if (targetWord && settingStore.wordSound) playEdgeTts(targetWord, { volume: settingStore.wordSoundVolume / 100 })
+}
+
+/** 判断当前位置是否是例句中某个英文单词的首字母。纯字母模式按字母偏移计算。 */
+function isSentenceWordStart(text: string, position: number, lettersOnly: boolean): boolean {
+  const matches = [...text.matchAll(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g)]
+  if (!lettersOnly) return matches.some(match => match.index === position)
+  let offset = 0
+  return matches.some(match => {
+    const start = offset
+    offset += match[0].length
+    return start === position
+  })
 }
 
 // 双击空格跳过剩余例句:记录上次空格按下时间(毫秒),间隔小于阈值视为双击
@@ -455,7 +475,6 @@ async function onTyping(e: KeyboardEvent) {
   }
   // 例句纯字母模式:例句输入中(未完成)空格/标点/数字等非字母键无操作(自动跳过,不判错不输入;例句完成后空格仍是切换键,不受影响)
   if (isSentenceLettersOnly() && e.key.length === 1 && !/[A-Za-z]/.test(e.key)) return
-  if (isTypingSentence() && input.length === 0) playSentenceWord(currentPracticeSentenceIndex, 0)
   inputLock = true
   let letter = e.key
   // console.log('letter',letter)
@@ -517,6 +536,12 @@ async function onTyping(e: KeyboardEvent) {
     // console.log('e', e, e.code, e.shiftKey, word[input.length])
 
     if (right) {
+      if (isTypingSentence()) {
+        const sentence = props.word.sentences?.[currentPracticeSentenceIndex]?.c ?? ''
+        if (isSentenceWordStart(sentence, judgePos, lettersOnly)) {
+          playSentenceWord(currentPracticeSentenceIndex, lettersOnly ? judgePos : input.length, lettersOnly)
+        }
+      }
       input += letter
       wrong = ''
       playKeyboardAudio()
