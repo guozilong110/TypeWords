@@ -30,3 +30,13 @@ npm run dist         # 生成 NSIS 安装包到 release/
 
 - 学习数据存在 IndexedDB,物理位置在 Electron 的 userData 目录(升级覆盖安装不会丢)
 - 用户数据目录: `%APPDATA%\EnglishLearner`(打包后)
+
+## macOS 首次打开
+
+如果 macOS 提示“EnglishLearner 已损坏，无法打开”，这是未经过 Apple Developer 公证的应用被 Gatekeeper 拦截。将应用拖入“应用程序”后，在终端执行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/EnglishLearner.app
+```
+
+然后重新打开 EnglishLearner。也可以在 Finder 中右键应用并选择“打开”。
