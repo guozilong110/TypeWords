@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { lookupWord } from '../../hooks/useWordLookup.ts'
 import { usePlayWordAudio } from '../../hooks/sound.ts'
+import { onMounted, watch } from 'vue'
+import { prefetchWordAudio } from '../../hooks/preloadTts'
+import { useSettingStore } from '../../stores/setting'
 
-defineProps<{
+const props = defineProps<{
   word: string
 }>()
 
 const playWordAudio = usePlayWordAudio()
+const settingStore = useSettingStore()
+const preloadWord = () => { void prefetchWordAudio(props.word, settingStore.ttsVoice) }
+onMounted(preloadWord)
+watch([() => props.word, () => settingStore.ttsVoice], preloadWord)
 
 function onClick(e: MouseEvent, word: string) {
   lookupWord(e, word, playWordAudio)

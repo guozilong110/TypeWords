@@ -368,7 +368,7 @@ const EDGE_TTS_URL =
   EDGE_TTS_TOKEN +
   '&ConnectionId='
 const EDGE_TTS_GEC_VERSION = '1-143.0.3650.75'
-const EDGE_TTS_VOICE = 'zh-CN-XiaoxiaoNeural' // 晓晓(默认音色,可在设置选择)
+const EDGE_TTS_VOICE = 'en-US-JennyNeural' // Jenny(默认音色,可在设置选择)
 
 // Sec-MS-GEC 签名:ticks(1601 epoch 秒,向下取整到 5 分钟 → 100ns 单位) + token 的 sha256
 function generateSecMsGec() {

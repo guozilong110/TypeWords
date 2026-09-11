@@ -2,7 +2,6 @@ import { ref, unref, type ComputedRef, type Ref } from 'vue'
 import type { Word } from '../types'
 import { playEdgeTts, usePlayWordAudio } from '../hooks/sound'
 import { useSettingStore } from '../stores/setting'
-import { buildTransSpeechText } from '../utils/transSpeech'
 
 export enum WordPlayTrigger {
   NewWord = 'newWord',
@@ -16,9 +15,6 @@ export enum WordPlayTrigger {
   Manual = 'manual',
   Shortcut = 'shortcut',
 }
-
-/** 非整词发音的触发(打字纠错/退格重试),不触发中文翻译自动播放 */
-const NO_TRANSLATE_TRIGGERS = new Set([WordPlayTrigger.Typo, WordPlayTrigger.DelRetry])
 
 export interface WordPracticeAudioOptions {
   word: Ref<Word>
@@ -54,22 +50,6 @@ export function useWordPracticeAudio({ word, volumeIconRef }: WordPracticeAudioO
     })
   }
 
-  /** 单词发音结束后自动朗读中文翻译(设置-音效「自动朗读中文翻译」开启时) */
-  function playTranslationAfterWord() {
-    if (!settingStore.autoPlayTrans) return
-    // 顿号连接多释义(句号会让 Edge TTS 停顿过长);与预加载/查词/词表共用同一拼接(缓存 key 一致)
-    const zh = buildTransSpeechText(word.value.trans, settingStore.showDetailedTrans, settingStore.limitTransSpeech)
-    if (!zh) return
-    playEdgeTts(zh, {
-      volume: settingStore.wordSoundVolume / 100,
-      engine: {
-        // 翻译朗读用独立语速(transSoundSpeed),与单词发音(wordSoundSpeed)互不影响
-        lengthScale: settingStore.transSoundSpeed,
-        voice: settingStore.ttsVoice,
-      },
-    })
-  }
-
   function playWord(
     trigger: WordPlayTrigger,
     options?: { resetIcon?: boolean; volumeRef?: { animateOnly?: (reset?: boolean) => void } }
@@ -79,9 +59,7 @@ export function useWordPracticeAudio({ word, volumeIconRef }: WordPracticeAudioO
       trigger === WordPlayTrigger.Manual ||
       trigger === WordPlayTrigger.Shortcut
 
-    // 单词发音播完后紧接着播中文翻译(打字纠错等非整词发音除外)
-    const onEnd = NO_TRANSLATE_TRIGGERS.has(trigger) ? undefined : playTranslationAfterWord
-    playWordAudio(word.value.word, handle, onEnd)
+    playWordAudio(word.value.word, handle)
 
     const iconRef = options?.volumeRef ?? unref(volumeIconRef)
     iconRef?.animateOnly?.(options?.resetIcon ?? false)

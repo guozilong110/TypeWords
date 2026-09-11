@@ -2,244 +2,213 @@ import type { Word } from '../types'
 import { del, get, set } from 'idb-keyval'
 import { useSettingStore } from '../stores/setting'
 import { buildTransSpeechText } from '../utils/transSpeech'
+import { splitEnglishText } from '../utils/wordLookup'
 
-/**
- * 朗读缓存(预加载 + 播放即缓存 + 跨会话持久化):
- * ① 练习页滑窗预加载:学当前词时后台提前合成后续词的发音/翻译,点朗读零等待
- * ② 播放即缓存:学过的词回头复习/重听零延迟
- * ③ IndexedDB 持久化:最近 400 条翻译音频存磁盘,重启软件后依然命中(隔天复习零延迟)
- * 退出练习页只清内存,磁盘缓存保留。
- */
+// 全局共享：单词、翻译和例句统一按文本 + 音色 + 合成语速缓存，跨页面、跨会话复用。
+const PERSIST_KEY = 'tts-trans-cache'
+const DEFAULT_CACHE_LIMIT = 10000
+const DEFAULT_VOICE = 'en-US-JennyNeural'
+type Entry = { text: string; src: string; voice: string; speed: number; ts: number; playCount: number }
+const cache = new Map<string, Entry>()
+let loading: Promise<void> | null = null
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+let writes: Promise<unknown> = Promise.resolve()
+let generation = 0
 
-const PRELOAD_COUNT = 8 // 预加载当前词后面几个词
-const PRELOAD_CONCURRENCY = 3 // 并行合成上限(Edge TTS 是主进程连接,避免并发风暴)
-const PERSIST_KEY = 'tts-trans-cache' // IndexedDB 键(idb-keyval)
-const PERSIST_MAX = 400 // 持久化条数上限(每条约 20-40KB,约 10MB)
-const PERSIST_DEBOUNCE = 1000 // 防抖:1 秒内多次写入合并为一次
-
-/** word:type -> data URL(有道发音,主进程代理下载);key 带音色,英音/美音互不串用 */
-const wordAudioCache = new Map<string, string>()
-/** 释义文本(+音色/语速/时间) -> Edge TTS data URL */
-const transAudioCache = new Map<string, { src: string; voice?: string; speed?: number; ts: number }>()
-const transGenerating = new Set<string>()
-let persistTimer: any = null
-let persistLoaded = false
-
-/** 有道音色 → type 参数:uk=英音(1),其余美音(2) */
-function soundTypeToParam(soundType: string): number {
-  return soundType === 'uk' ? 1 : 2
+function audioKey(text: string, voice = DEFAULT_VOICE, speed = 1) {
+  return JSON.stringify([text.trim(), voice, speed])
 }
 
-/** 发音缓存 key:word + 音色(切换英/美音后互不命中,不会播放错音色) */
-function wordAudioKey(word: string, type: number): string {
-  return `${word}:${type}`
+export function getTtsCacheLimit(): number {
+  const value = Number(useSettingStore().ttsCacheLimit)
+  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_CACHE_LIMIT
 }
 
-export function getCachedWordAudio(word: string, soundType: string): string | null {
-  return wordAudioCache.get(wordAudioKey(word, soundTypeToParam(soundType))) ?? null
+export async function applyTtsCacheLimit() {
+  await ensurePersistedCacheLoaded()
+  trimCache()
+  await flushPersistNow()
 }
 
-/** 命中缓存且音色/语速一致才返回(设置变更后自动失效,重新合成) */
-export function getCachedTransAudio(text: string, voice?: string, speed?: number): string | null {
-  // 兼容 v0.3.7 前的旧缓存:当时多释义用句号「。」连接,现用顿号「、」。
-  // 新 key 未命中时查旧 key,避免升级后历史 400 条缓存全部浪费、首轮全部重新合成
-  const candidates = text ? [text, text.replace(/、/g, '。')] : []
-  for (const key of candidates) {
-    const item = transAudioCache.get(key)
-    if (!item) continue
-    if (item.voice !== (voice ?? 'zh-CN-XiaoxiaoNeural')) continue
-    if (Math.abs((item.speed ?? 1) - (speed ?? 1)) > 0.01) continue
-    return item.src
+function trimCache(limit = getTtsCacheLimit()) {
+  if (cache.size <= limit) return
+  // LFU：播放次数相同时，先淘汰最久未播放（或最早缓存）的条目。
+  const candidates = [...cache.entries()].sort((a, b) =>
+    a[1].playCount - b[1].playCount || a[1].ts - b[1].ts
+  )
+  for (const [key] of candidates.slice(0, cache.size - limit)) cache.delete(key)
+}
+
+export function ensurePersistedCacheLoaded(_force = false): Promise<void> {
+  if (!loading) {
+    const epoch = generation
+    loading = (async () => {
+      try {
+        const list = await get(PERSIST_KEY)
+        if (epoch !== generation || !Array.isArray(list)) return
+        for (const item of [...list].reverse()) {
+          if (!item?.text || !item?.src) continue
+          const entry = { ...item, voice: item.voice ?? 'zh-CN-XiaoxiaoNeural', speed: item.speed ?? 1,
+            playCount: Number.isSafeInteger(item.playCount) && item.playCount >= 0 ? item.playCount : 0,
+            ts: item.ts ?? 0,
+          }
+          const key = audioKey(entry.text, entry.voice, entry.speed)
+          if (!cache.has(key)) cache.set(key, entry)
+        }
+        trimCache()
+      } catch { /* IndexedDB 不可用时仍使用内存缓存 */ }
+    })()
   }
-  return null
+  return loading
 }
 
-/** 内存缓存 → 待持久化列表(按时间倒序保留最新 PERSIST_MAX 条) */
-function snapshotPersistList() {
-  return Array.from(transAudioCache.entries())
-    .map(([text, v]) => ({ text, src: v.src, voice: v.voice, speed: v.speed, ts: v.ts }))
-    .sort((a, b) => b.ts - a.ts)
-    .slice(0, PERSIST_MAX)
-}
-
-/** 把内存缓存异步写入 IndexedDB(防抖,保留最新 PERSIST_MAX 条) */
-function schedulePersist() {
-  clearTimeout(persistTimer)
-  persistTimer = setTimeout(() => {
-    persistTimer = null
-    const list = snapshotPersistList()
-    if (list.length) set(PERSIST_KEY, list).catch(() => {})
-  }, PERSIST_DEBOUNCE)
-}
-
-/**
- * 从 IndexedDB 恢复最近合成的翻译音频(隔天复习/重新进入练习页零延迟)。
- * 应用启动时调用一次(force=false);练习页 onMounted 每次进入都调用(force=true,
- * 因为退出练习页会清内存,必须重新从磁盘恢复)。
- */
-export async function ensurePersistedCacheLoaded(force = false) {
-  if (persistLoaded && !force) return
-  persistLoaded = true
-  try {
-    const list = (await get(PERSIST_KEY)) as { text: string; src: string; voice?: string; speed?: number; ts: number }[] | undefined
-    if (!Array.isArray(list)) return
-    for (const item of list) {
-      if (item?.text && item?.src && !transAudioCache.has(item.text)) {
-        transAudioCache.set(item.text, { src: item.src, voice: item.voice, speed: item.speed, ts: item.ts ?? 0 })
-      }
-    }
-  } catch {
-    // IndexedDB 不可用时静默(缓存只是加速,非必需)
-  }
-}
-
-/** 立即把内存缓存写入磁盘(不依赖防抖,退出/清缓存前调用) */
 function flushPersistNow() {
-  clearTimeout(persistTimer)
+  if (persistTimer) clearTimeout(persistTimer)
   persistTimer = null
-  const list = snapshotPersistList()
-  if (list.length) set(PERSIST_KEY, list).catch(() => {})
+  const list = [...cache.values()].reverse()
+  writes = writes.catch(() => {}).then(() => set(PERSIST_KEY, list)).catch(() => {})
+  return writes
 }
 
-/** 播放/预加载后写入缓存(播放即缓存),并异步持久化到磁盘 */
-export function cacheTransAudio(text: string, src: string, voice?: string, speed?: number) {
-  if (!text || !src) return
-  transAudioCache.set(text, { src, voice, speed, ts: Date.now() })
+export function getCachedTransAudio(text: string, voice = DEFAULT_VOICE, speed = 1): string | null {
+  const key = audioKey(text, voice, speed)
+  const item = cache.get(key)
+  if (!item) return null
+  return item.src
+}
+
+export function cacheTransAudio(text: string, src: string, voice = DEFAULT_VOICE, speed = 1) {
+  if (!text.trim() || !src) return
+  const key = audioKey(text, voice, speed)
+  const existing = cache.get(key)
+  // 新语音入库前为其腾出位置，保留已有条目的播放统计。
+  if (!existing) trimCache(getTtsCacheLimit() - 1)
+  cache.set(key, { text: text.trim(), src, voice, speed, ts: existing?.ts ?? Date.now(), playCount: existing?.playCount ?? 0 })
   schedulePersist()
 }
 
-/** 退出练习页:先把内存缓存刷入磁盘(防抖可能未触发,避免丢数据),再清内存 */
-export function clearTtsCaches() {
-  flushPersistNow()
-  wordAudioCache.clear()
-  transAudioCache.clear()
-  transGenerating.clear()
-  prefetchQueue.length = 0 // 丢弃待执行的预加载任务,避免残留合成写回已清缓存
+function schedulePersist() {
+  if (persistTimer) clearTimeout(persistTimer)
+  persistTimer = setTimeout(flushPersistNow, 1000)
 }
 
-/** 清空全部语音缓存(内存 + IndexedDB 持久化),下次播放重新合成(数据管理-清空语音缓存) */
-export async function clearAllTtsCaches() {
-  clearTtsCaches()
-  try {
-    await del(PERSIST_KEY)
-  } catch {
-    // 忽略:清理失败不影响主功能
+/** 仅在音频成功开始播放后计数；预加载、查询、失败和取消请求不增加播放次数。 */
+export function recordAudioPlayback(text: string, voice = DEFAULT_VOICE, speed = 1) {
+  const item = cache.get(audioKey(text, voice, speed))
+  if (!item) return
+  item.playCount++
+  item.ts = Date.now()
+  schedulePersist()
+}
+
+type Job = { key: string; run: () => Promise<void>; resolve: (src: string | null) => void }
+const queue: Job[] = []
+const pending = new Map<string, Promise<string | null>>()
+let workers = 0
+
+function drain() {
+  while (workers < 3 && queue.length) {
+    const job = queue.shift()!
+    workers++
+    void job.run().finally(() => { workers--; drain() })
   }
 }
 
-/**
- * 预下载单词发音(主进程代理下载有道在线音频 → data URL 缓存;绕开 CORS)。
- * 练习页滑窗预加载 + 播放未命中时的后台补缓存都用它。
- */
-export async function prefetchWordAudio(word: string, soundType: string) {
-  const type = soundTypeToParam(soundType)
-  const key = wordAudioKey(word, type)
-  if (!word || wordAudioCache.has(key)) return
-  try {
-    const fetchAudio = (window as any).desktop?.fetchWordAudio
-    if (typeof fetchAudio !== 'function') return
-    const src = await fetchAudio(word, type)
-    if (src && !wordAudioCache.has(key)) {
-      wordAudioCache.set(key, src)
+/** 缓存优先；预加载与播放共享在途请求，点击时将等待中的任务提前。 */
+export async function getOrCreateEdgeAudio(text: string, voice = DEFAULT_VOICE, speed = 1, priority = false): Promise<string | null> {
+  text = text.trim()
+  if (!text || typeof window === 'undefined') return null
+  await ensurePersistedCacheLoaded()
+  const cached = getCachedTransAudio(text, voice, speed)
+  if (cached) return cached
+  const key = audioKey(text, voice, speed)
+  if (pending.has(key)) {
+    if (priority) {
+      const index = queue.findIndex(job => job.key === key)
+      if (index > 0) queue.unshift(queue.splice(index, 1)[0])
     }
-  } catch {
-    // 静默:断网/失败跳过,播放时走在线
+    return pending.get(key)!
   }
-}
-
-/** 预合成一段文本(Edge TTS 在线 → data URL 缓存;翻译/例句共用,缓存 key = 文本 + 音色/语速) */
-async function prefetchEdgeTts(text: string, voice: string, speed: number) {
-  if (!text || transAudioCache.has(text) || transGenerating.has(text)) return
-  transGenerating.add(text)
-  try {
-    const speak = (window as any).desktop?.speakText
-    if (typeof speak !== 'function') return
-    const src = await speak(text, { lengthScale: speed, voice })
-    if (src && !transAudioCache.has(text)) {
-      transAudioCache.set(text, { src, voice, speed, ts: Date.now() })
-      schedulePersist()
-    }
-  } catch {
-    // 静默
-  } finally {
-    transGenerating.delete(text)
-  }
-}
-
-/** 预合成中文翻译(Edge TTS 在线 → data URL 缓存) */
-async function prefetchTransAudio(word: Word, voice: string, speed: number) {
-  if (!word?.word) return
-  // 与播放侧一致:显示详细翻译/精简朗读 开关都在同一个拼接函数里(缓存 key 一致)
-  const store = useSettingStore()
-  const zh = buildTransSpeechText(word.trans, store.showDetailedTrans, store.limitTransSpeech)
-  if (zh) await prefetchEdgeTts(zh, voice, speed)
-}
-
-/**
- * 全局预加载队列(默认 3 并发):
- * 所有 schedulePrefetch 的任务进同一个队列、共享同一池,避免每次切词新建并发池
- * 导致 3×N 路 Edge TTS 同时请求(主进程无限流,微软端会拒绝/超时,合成失败不写缓存)。
- */
-const prefetchQueue: (() => Promise<void>)[] = []
-let prefetchWorkers: Promise<void>[] | null = null
-
-function enqueuePrefetch(tasks: (() => Promise<void>)[]) {
-  if (tasks.length) prefetchQueue.push(...tasks)
-  if (prefetchWorkers) return // 池已在跑,任务追加进队列即可
-  prefetchWorkers = Array.from({ length: PRELOAD_CONCURRENCY }, async () => {
-    while (prefetchQueue.length) {
-      const task = prefetchQueue.shift()!
+  const epoch = generation
+  let resolve!: (src: string | null) => void
+  const result = new Promise<string | null>(done => { resolve = done })
+  pending.set(key, result)
+  const job: Job = {
+    key, resolve,
+    async run() {
       try {
-        await task()
-      } catch {}
-    }
-  })
-  Promise.all(prefetchWorkers).then(() => {
-    prefetchWorkers = null
-    if (prefetchQueue.length) enqueuePrefetch([]) // 收尾竞态:池结束瞬间又有新任务,补启动一轮
-  })
+        const src = await (window as any).desktop?.speakText?.(text, { voice, lengthScale: speed })
+        if (epoch !== generation) { resolve(null); return }
+        if (src) cacheTransAudio(text, src, voice, speed)
+        resolve(src || null)
+      } catch { resolve(null) }
+      finally { if (pending.get(key) === result) pending.delete(key) }
+    },
+  }
+  if (priority) queue.unshift(job)
+  else queue.push(job)
+  drain()
+  return result
 }
 
-/**
- * 滑窗预加载:单词发音 + 中文翻译 + 例句语音,在 3 并发池内排队合成。
- * 任务顺序:① 当前词例句最优先(正在看的词,点喇叭零等待) → ② 滑窗词发音/翻译 → ③ 滑窗词例句。
- * 例句与翻译共用 voice 音色、独立 sentenceSpeed 语速;去重由 prefetchEdgeTts 内部处理。
- * 注意:每个任务必须是 await 单条合成的 async 函数,否则并发控制失效(一次同步发出 N 条
- * Edge TTS 请求,主进程无限流,微软端拒绝/超时导致合成失败不写缓存)。
- */
+// 单词保留大小写与词形，不把不同原文（例如 US/us）错误地合并。
+export function getCachedWordAudio(word: string, voice: string) {
+  return getCachedTransAudio(word.trim(), voice, 1)
+}
+
+export function prefetchWordAudio(word: string, voice: string) {
+  // 单词缓存标准语速，播放时变速，重复慢读也无需重新合成。
+  return getOrCreateEdgeAudio(word.trim(), voice, 1)
+}
+
+export function prefetchEnglishWords(text: string, voice: string) {
+  const words = new Set(splitEnglishText(text).filter(token => token.isWord).map(token => token.text))
+  for (const word of words) void prefetchWordAudio(word, voice)
+}
+
+/** 离开练习页仅刷盘，缓存仍供全局使用。 */
+export function clearTtsCaches() {
+  void flushPersistNow()
+}
+
+/** 用户主动清理时，防止未完成的合成请求重新写回缓存。 */
+export async function clearAllTtsCaches() {
+  generation++
+  if (persistTimer) clearTimeout(persistTimer)
+  persistTimer = null
+  cache.clear()
+  for (const job of queue.splice(0)) job.resolve(null)
+  pending.clear()
+  await loading
+  await writes
+  try { await del(PERSIST_KEY) } catch { /* 清理失败不影响播放 */ }
+}
+
 export function schedulePrefetch(
-  words: Word[],
-  index: number,
-  opts: { soundType: string; voice: string; speed: number; sentenceSpeed: number }
+  words: Word[], index: number,
+  opts: { soundType?: string; voice: string; speed: number; sentenceSpeed: number }
 ) {
   if (!Array.isArray(words) || !words.length) return
-  const targets = words.slice(index + 1, index + 1 + PRELOAD_COUNT)
-  const tasks: (() => Promise<void>)[] = []
-  // ① 当前词例句最优先(学完停留看例句的场景,点击喇叭零等待)
   const current = words[index]
   if (current?.word) {
-    for (const s of current.sentences ?? []) {
-      if (s?.c) tasks.push(() => prefetchEdgeTts(s.c, opts.voice, opts.sentenceSpeed))
+    void prefetchWordAudio(current.word, opts.voice)
+    // 当前例句中的每个可点击单词优先准备，与 ClickableEnglishText 使用同一分词器。
+    for (const sentence of current.sentences ?? []) {
+      if (!sentence?.c) continue
+      prefetchEnglishWords(sentence.c, opts.voice)
+      void getOrCreateEdgeAudio(sentence.c, opts.voice, opts.sentenceSpeed)
     }
   }
-  // ② 滑窗词的发音/翻译(原有逻辑,缓存命中自动跳过)
-  for (const w of targets) {
-    if (!w?.word) continue
-    const audioKey = wordAudioKey(w.word, soundTypeToParam(opts.soundType))
-    if (!wordAudioCache.has(audioKey)) tasks.push(() => prefetchWordAudio(w.word, opts.soundType))
-    const store = useSettingStore()
-    const transText = buildTransSpeechText(w.trans, store.showDetailedTrans, store.limitTransSpeech)
-    // has 判断同样兼容旧缓存(句号 key),命中旧缓存就不重复合成
-    if (transText && !transAudioCache.has(transText) && !transAudioCache.has(transText.replace(/、/g, '。'))) {
-      tasks.push(() => prefetchTransAudio(w, opts.voice, opts.speed))
+  const store = useSettingStore()
+  for (const word of words.slice(index + 1, index + 9)) {
+    if (!word?.word) continue
+    void prefetchWordAudio(word.word, opts.voice)
+    const text = buildTransSpeechText(word.trans, store.showDetailedTrans, store.limitTransSpeech)
+    if (text) void getOrCreateEdgeAudio(text, opts.voice, opts.speed)
+    for (const sentence of word.sentences ?? []) {
+      if (!sentence?.c) continue
+      void getOrCreateEdgeAudio(sentence.c, opts.voice, opts.sentenceSpeed)
+      prefetchEnglishWords(sentence.c, opts.voice)
     }
   }
-  // ③ 滑窗词的例句(低优先级,后台慢慢备好;每句一个任务,逐句 await,3 并发内)
-  for (const w of targets) {
-    if (!w?.word) continue
-    for (const s of w.sentences ?? []) {
-      if (s?.c) tasks.push(() => prefetchEdgeTts(s.c, opts.voice, opts.sentenceSpeed))
-    }
-  }
-  enqueuePrefetch(tasks)
 }

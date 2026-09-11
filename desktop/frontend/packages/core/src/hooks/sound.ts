@@ -2,8 +2,8 @@ import { onMounted, watchEffect } from 'vue'
 import { useSettingStore } from '../stores/setting'
 import { ref } from 'vue'
 
-import { ENV, PronunciationApi, SoundFileOptions } from '../config/env'
-import { cacheTransAudio, getCachedTransAudio, getCachedWordAudio, prefetchWordAudio } from './preloadTts'
+import { SoundFileOptions } from '../config/env'
+import { getOrCreateEdgeAudio, recordAudioPlayback } from './preloadTts'
 
 export function useSound(audioSrcList?: string[], audioFileLength?: number) {
   let audioList = ref<HTMLAudioElement[]>([])
@@ -133,11 +133,13 @@ export function resetActiveWordPlayCount(word: string) {
   activeWordPlayCountMap.delete(word.trim().toLowerCase())
 }
 
-let isPlaying = false
+let wordPlayRequest = 0
+let ttsPlayRequest = 0
 let activeWordAudio: HTMLAudioElement | null = null
 let activeTtsAudio: HTMLAudioElement | null = null
 
 export function cancelWordPracticeAudio() {
+  wordPlayRequest++
   if (activeWordAudio) {
     activeWordAudio.onended = null
     activeWordAudio.onerror = null
@@ -145,11 +147,11 @@ export function cancelWordPracticeAudio() {
     activeWordAudio.currentTime = 0
   }
   cancelTtsAudio()
-  isPlaying = false
 }
 
 /** 停止正在播放的 TTS 音频(切换/打断时调用) */
 export function cancelTtsAudio() {
+  ttsPlayRequest++
   if (activeTtsAudio) {
     activeTtsAudio.onended = null
     activeTtsAudio.onerror = null
@@ -173,15 +175,11 @@ export async function playEdgeTts(
   options: { volume?: number; rate?: number; onEnd?: () => void; engine?: EdgeTtsConfig } = {}
 ): Promise<boolean> {
   if (!text || typeof window === 'undefined') return false
-  const speak = (window as any).desktop?.speakText
-  if (typeof speak !== 'function') return false
+  cancelTtsAudio()
+  const request = ttsPlayRequest
   try {
-    // 练习页预加载缓存命中(音色/语速一致)则直接播放,零延迟
-    let src = getCachedTransAudio(text, options.engine?.voice, options.engine?.lengthScale)
-    if (!src) {
-      // 展开为普通对象再传 IPC(Vue reactive proxy 无法被 Electron IPC 序列化,会抛 DataCloneError)
-      src = await speak(text, options.engine ? { ...options.engine } : null)
-    }
+    const src = await getOrCreateEdgeAudio(text, options.engine?.voice, options.engine?.lengthScale, true)
+    if (request !== ttsPlayRequest) return false
     if (!src) {
       // 合成失败(断网/接口异常):派发事件,由界面层做节流提示
       try {
@@ -189,9 +187,6 @@ export async function playEdgeTts(
       } catch {}
       return false
     }
-    // 播放即缓存:学过的词回头复习/重听时零延迟,无需重新合成
-    cacheTransAudio(text, src, options.engine?.voice, options.engine?.lengthScale)
-    cancelTtsAudio()
     // 主进程返回带 mime 前缀的 data URL(Edge TTS = mp3,本地引擎 = wav)
     const audio = new Audio(src.startsWith('data:') ? src : 'data:audio/wav;base64,' + src)
     audio.volume = options.volume ?? 1
@@ -204,6 +199,7 @@ export async function playEdgeTts(
     audio.onerror = finish
     activeTtsAudio = audio
     await audio.play()
+    recordAudioPlayback(text, options.engine?.voice, options.engine?.lengthScale)
     return true
   } catch {
     return false
@@ -212,48 +208,44 @@ export async function playEdgeTts(
 
 export function usePlayWordAudio() {
   const settingStore = useSettingStore()
-  let audio = ref<HTMLAudioElement>(null)
 
-  onMounted(() => {
-    audio.value = new Audio()
-  })
-
-  function playAudio(word: string, handle: boolean = true, onEnd?: () => void) {
-    if (!word || isPlaying) return
-    isPlaying = true
+  async function playAudio(word: string, handle: boolean = true, onEnd?: () => void) {
+    if (!word?.trim()) return
+    cancelWordPracticeAudio()
+    const request = wordPlayRequest
+    const voice = settingStore.ttsVoice
     let playbackRate = settingStore.wordSoundSpeed
     if (handle) {
       const key = word.trim().toLowerCase()
       const count = activeWordPlayCountMap.get(key) ?? 0
-      if (count % 3 !== 0) {
-        playbackRate = playbackRate * 0.75
-      }
+      if (count % 3 !== 0) playbackRate *= 0.75
       activeWordPlayCountMap.set(key, count + 1)
     }
-    // console.log('playAudio-handle', handle, playbackRate)
-
-    // 练习页预加载缓存命中(blob URL)则直接播放,零延迟;否则在线有道
-    // 缓存 key 带音色:切换英/美音后不会播放旧音色的缓存
-    const cachedUrl = getCachedWordAudio(word, settingStore.soundType)
-    if (!cachedUrl) {
-      // 播放即缓存:未命中时后台走主进程代理下载存缓存,下次遇到同一词零延迟(滑窗预加载之外的兜底)
-      prefetchWordAudio(word, settingStore.soundType)
+    const src = await getOrCreateEdgeAudio(word.trim(), voice, 1, true)
+    // 切词、取消或更换音色后，不播放刚刚完成的旧请求。
+    if (request !== wordPlayRequest || voice !== settingStore.ttsVoice) return
+    if (!src) {
+      window.dispatchEvent(new CustomEvent('edge-tts-fail'))
+      onEnd?.()
+      return
     }
-    const url = cachedUrl ?? `${PronunciationApi}${word}&type=${settingStore.soundType === 'uk' ? 1 : 2}`
-    let onended = () => {
-      isPlaying = false
+    const audio = new Audio(src)
+    activeWordAudio = audio
+    let finished = false
+    const finish = () => {
+      if (finished || request !== wordPlayRequest) return
+      finished = true
+      if (activeWordAudio === audio) activeWordAudio = null
       onEnd?.()
     }
-    activeWordAudio = audio.value
-    audio.value.onended = onended
-    // 加载失败(404/网络错误)也释放 isPlaying,否则后续单词发音全部静默(play() reject 只覆盖部分失败路径)
-    audio.value.onerror = onended
-    audio.value.src = url
-    audio.value.volume = settingStore.wordSoundVolume / 100
-    audio.value.playbackRate = playbackRate
-    // 静默失败:某些词无发音(有道 404)或源无效时,play() 会 reject,需捕获避免 Uncaught 日志,并释放 isPlaying
-    audio.value.play().catch(() => onended())
-    // 无本地兜底:离线时单词无发音(翻译朗读走微软 Edge TTS 在线)
+    audio.onended = finish
+    audio.onerror = finish
+    audio.volume = settingStore.wordSoundVolume / 100
+    audio.playbackRate = playbackRate
+    try {
+      await audio.play()
+      recordAudioPlayback(word.trim(), voice, 1)
+    } catch { finish() }
   }
 
   return playAudio

@@ -2,7 +2,9 @@
 import { isHighlightToken, splitEnglishText } from '../../utils/wordLookup.ts'
 import { lookupWord } from '../../hooks/useWordLookup.ts'
 import { usePlayWordAudio } from '../../hooks/sound.ts'
-import { computed } from 'vue'
+import { computed, watch, onMounted } from 'vue'
+import { prefetchEnglishWords } from '../../hooks/preloadTts'
+import { useSettingStore } from '../../stores/setting'
 
 interface IProps {
   text: string
@@ -21,6 +23,11 @@ const props = withDefaults(defineProps<IProps>(), {
 const playWordAudio = usePlayWordAudio()
 
 const tokens = computed(() => splitEnglishText(props.text))
+const settingStore = useSettingStore()
+const preloadWords = () => prefetchEnglishWords(props.text, settingStore.ttsVoice)
+onMounted(preloadWords)
+watch([() => props.text, () => settingStore.ttsVoice], preloadWords)
+
 
 function onWordClick(e: MouseEvent, token: string) {
   lookupWord(e, token, playWordAudio)

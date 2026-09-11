@@ -10,6 +10,7 @@ import {
   usePlayBeep,
   usePlayCorrect,
   usePlayKeyboardAudio,
+  usePlayWordAudio,
 } from '../../hooks/sound'
 import { WordPlayTrigger, useWordPracticeAudio } from '../../composables/useWordPracticeAudio'
 import { emitter, EventKey, useEventsByWatch } from '../../utils/eventBus'
@@ -71,6 +72,8 @@ const store = useBaseStore()
 const playBeep = usePlayBeep()
 const playCorrect = usePlayCorrect()
 const playKeyboardAudio = usePlayKeyboardAudio()
+// 例句打字与点击单词共用音色、语速和全局缓存；自动发音不触发重复慢读。
+const playSentenceTokenAudio = usePlayWordAudio()
 
 const volumeIconRef: any = $ref()
 
@@ -375,7 +378,7 @@ function playSentenceWord(index: number, position: number, lettersOnly = false) 
       })()
     : (text.slice(0, position).match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []).length
   const targetWord = words[wordIndex]
-  if (targetWord && settingStore.wordSound) playEdgeTts(targetWord, { volume: settingStore.wordSoundVolume / 100 })
+  if (targetWord && settingStore.wordSound) playSentenceTokenAudio(targetWord, false)
 }
 
 /** 判断当前位置是否是例句中某个英文单词的首字母。纯字母模式按字母偏移计算。 */
@@ -554,7 +557,7 @@ async function onTyping(e: KeyboardEvent) {
           const sentence = props.word.sentences?.[currentPracticeSentenceIndex]?.c ?? ''
           const words = sentence.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []
           const idx = (sentence.slice(0, input.length).match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) ?? []).length
-          if (words[idx]) playEdgeTts(words[idx], { volume: settingStore.wordSoundVolume / 100 })
+          if (words[idx]) playSentenceTokenAudio(words[idx], false)
         } else playWord(WordPlayTrigger.Typo, { volumeRef: targetVolumeIcon })
       }
       waitClear = true

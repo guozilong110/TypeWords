@@ -128,6 +128,16 @@ watch(
   }
 )
 
+// 更换音色或语速时为当前页面重新准备对应缓存。
+watch(
+  [() => settingStore.ttsVoice, () => settingStore.transSoundSpeed, () => settingStore.sentenceSoundSpeed],
+  () => schedulePrefetch(data.words, data.index, {
+    voice: settingStore.ttsVoice,
+    speed: settingStore.transSoundSpeed,
+    sentenceSpeed: settingStore.sentenceSoundSpeed,
+  })
+)
+
 // 练习类型/测验方式切换(如进入单词测验阶段)时,同步重建或清空 question
 watch(
   [() => settingStore.wordPracticeType, () => settingStore.identifyMethod],
@@ -260,7 +270,7 @@ onUnmounted(() => {
   if (simpleJumpTimer) clearTimeout(simpleJumpTimer) // 标记"已掌握"的跳词定时器,卸载后不再触发 next
   watchRefList.map(v => v?.stop())
   cancelWordPracticeAudio() // 退出练习页:停止正在播放的单词/翻译语音,避免回到主页还在读
-  clearTtsCaches() // 退出练习页:先刷盘再清内存缓存
+  clearTtsCaches() // 退出练习页:刷盘并保留全局语音缓存
 })
 
 let allWords: Word[] = []

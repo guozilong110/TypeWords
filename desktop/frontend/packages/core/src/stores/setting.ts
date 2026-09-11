@@ -70,8 +70,8 @@ export interface SettingState {
   _ignoreWatch: boolean //忽略监听，避免重复保存和上传
   showEtymologyAndRelWords:boolean // 显示词源和相关词
 
-  ttsVoice: string // 中文朗读音色(微软 Edge TTS 音色 ID,默认晓晓;例句朗读共用此音色)
-  autoPlayTrans: boolean // 单词发音结束后自动朗读中文翻译
+  ttsVoice: string // 翻译朗读音色(微软 Edge TTS 中英文音色 ID,默认 Jenny;例句朗读共用此音色)
+  ttsCacheLimit: number // 全局语音缓存数量上限，满后按播放次数淘汰
   limitTransSpeech: boolean // 精简翻译朗读:每个词性最多朗读前 3 条释义(默认关 = 朗读全部)
   sentenceSoundSpeed: number // 例句朗读语速(与单词/翻译语速独立;例句朗读共用 ttsVoice 音色)
   practiceAreaWidth: number // 练习页内容区固定宽度(px,窗口窄时自动收窄)
@@ -159,8 +159,8 @@ export const getDefaultSettingState = (): SettingState => ({
   identifyMethod: IdentifyMethod.SelfAssessment,
   _ignoreWatch: false,
   showEtymologyAndRelWords: true,
-  ttsVoice: 'zh-CN-XiaoxiaoNeural',
-  autoPlayTrans: false,
+  ttsVoice: 'en-US-JennyNeural',
+  ttsCacheLimit: 10000,
   limitTransSpeech: false,
   practiceAreaWidth: 870,
   testTransFontSize: 16,

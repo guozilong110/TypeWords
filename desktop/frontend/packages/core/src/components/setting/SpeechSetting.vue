@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Option, Select, Switch } from '@english-learner/base'
+import { Switch } from '@english-learner/base'
 import SettingItem from './SettingItem.vue'
 import SoundMasterControl from './SoundMasterControl.vue'
 import TtsEngineSettings from './TtsEngineSettings.vue'
@@ -34,23 +34,14 @@ const SPEED_ITEMS = [
 
     <!-- 发音朗读区 -->
     <SettingItem mainTitle="发音朗读" />
-    <SettingItem title="单词/句子发音口音" desc="仅单词生效，文章固定美音">
-      <Select v-model="settingStore.soundType" placeholder="请选择" class="w-full!">
-        <Option label="美音" value="us" />
-        <Option label="英音" value="uk" />
-      </Select>
-    </SettingItem>
-    <SettingItem title="自动朗读中文翻译" desc="单词发音结束后,紧接着自动朗读中文释义(仅练习页)">
-      <Switch v-model="settingStore.autoPlayTrans" />
-    </SettingItem>
     <SettingItem title="精简翻译朗读" desc="开启后朗读中文翻译时,每个词性最多朗读前 3 个释义,读完转下一词性,快速了解词义分布;关闭时朗读全部释义(默认)">
       <Switch v-model="settingStore.limitTransSpeech" />
     </SettingItem>
 
-    <!-- 中文翻译朗读(微软 Edge TTS 在线;单词发音走在线有道) -->
+    <!-- 单词、翻译与例句共用 Edge TTS 音色 -->
     <TtsEngineSettings
-      title="中文翻译朗读"
-      :sample="'坚持,就是胜利。每天进步一点点。'"
+      title="翻译朗读"
+      sample="Keep going. Make a little progress every day."
       :volume="settingStore.wordSoundVolume"
       :speed="settingStore.transSoundSpeed"
     />
