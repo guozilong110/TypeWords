@@ -2,7 +2,7 @@
 
 基于 [TypeWords](https://github.com/zyronon/TypeWords)(GPL-3.0)修改的 **Windows Electron 桌面背单词应用**:纯本地运行、离线优先、词库内嵌,唯一的练习形式是打字背单词(跟打 / 听写 / 自测 / 默写),FSRS 记忆曲线自动安排复习。
 
-本仓库基于第二作者的 [Aliboder/english-learner](https://github.com/Aliboder/english-learner)，根据个人习惯继续修改；上面的桌面版介绍来自该上游项目，其基础项目为 TypeWords。
+基于 [Aliboder/english-learner](https://github.com/Aliboder/english-learner)，根据个人习惯继续修改
 
 ## 相对于上游项目，本仓库的主要变动包括
 
