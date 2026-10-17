@@ -94,7 +94,7 @@ export const LIB_JS_URL = {
   JSZIP: `${ENV.LIBS_URL}/jszip.min.js`,
   XLSX: `${ENV.LIBS_URL}/xlsx.full.min.js`,
 }
-export const PronunciationApi = 'https://dict.youdao.com/dictvoice?audio='
+export const PronunciationApi = 'http://127.0.0.1:5568/tts?text='
 export const DefaultShortcutKeyMap = {
   [ShortcutKey.EditArticle]: 'Ctrl+E',
   [ShortcutKey.PlayWordPronunciation]: 'Ctrl+P',

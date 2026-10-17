@@ -209,10 +209,8 @@ export function usePlayWordAudio() {
       }, 5000)
     }
     // console.log('playAudio-handle', handle, playbackRate)
-    let url = `${PronunciationApi}${word}&type=2`
-    if (settingStore.soundType === 'uk') {
-      url = `${PronunciationApi}${word}&type=1`
-    }
+    const lang = settingStore.soundType === 'uk' ? 'en-GB' : 'en-US'
+    const url = `${PronunciationApi}${encodeURIComponent(word)}&lang=${lang}`
     let onended = () => {
       if (generation !== wordPlaybackGeneration) return
       onEnd?.()
