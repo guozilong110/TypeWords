@@ -356,7 +356,16 @@ ipcMain.handle('auto-backup-read', (event, name) => {
 })
 
 // ===== 中文翻译朗读(微软 Edge TTS 在线,免 key,晓晓等神经网络音色)=====
-// 单词发音走在线有道;例句朗读功能已删除;无任何本地语音引擎。
+// 在线优先；Kokoro 常驻子进程提供英文兜底，macOS 系统声音提供中文兜底。
+const { createLocalTts, createSpeechFallback } = require('./local-tts.cjs')
+const localTts = createLocalTts({
+  script: app.isPackaged
+    ? path.join(process.resourcesPath, 'tts', 'local-tts-worker.py')
+    : path.join(__dirname, 'scripts', 'local-tts-worker.py'),
+  log: (level, message) => writeLog(level, 'tts', message),
+})
+app.on('will-quit', () => localTts.stop())
+process.on('exit', () => localTts.stop())
 const WebSocket = require('ws')
 const crypto = require('crypto')
 
@@ -414,8 +423,8 @@ function speedToRate(speed) {
 function edgeTtsSynthesize(text, cfg) {
   return new Promise(resolve => {
     const totalTimer = setTimeout(() => {
-      try { ws.close() } catch {}
-      resolve(null)
+      writeLog('warn', 'tts', 'Edge TTS 合成超时')
+      finish(null)
     }, 15000)
     let done = false
     const finish = val => {
@@ -455,7 +464,13 @@ function edgeTtsSynthesize(text, cfg) {
     const rate = speedToRate(cfg && cfg.lengthScale)
     const chunks = []
 
-    ws.on('error', () => finish(null))
+    ws.on('error', err => {
+      writeLog('warn', 'tts', `Edge TTS 连接失败: ${err.message}`)
+      finish(null)
+    })
+    ws.on('close', () => {
+      if (!chunks.length) finish(null)
+    })
     ws.on('open', () => {
       try {
         const ts = edgeDateString()
@@ -504,10 +519,13 @@ function edgeTtsSynthesize(text, cfg) {
   })
 }
 
+const synthesizeSpeech = createSpeechFallback(edgeTtsSynthesize, localTts,
+  (level, message) => writeLog(level, 'tts', message))
+
 ipcMain.handle('tts-speak', (event, text, cfg) => {
   try {
-    // 文本 → mp3 base64(带 data:audio/mp3 前缀);失败返回 null(断网等,前端静默处理)
-    return edgeTtsSynthesize(typeof text === 'string' ? text : '', cfg && typeof cfg === 'object' ? cfg : null)
+    // 在线合成失败时自动离线兜底；返回 data URL，沿用前端缓存与播放链路。
+    return synthesizeSpeech(typeof text === 'string' ? text : '', cfg && typeof cfg === 'object' ? cfg : null)
   } catch {
     return null
   }
@@ -577,6 +595,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(() => {
+    if (!isSmokeTest) void localTts.start()
     // 协议处理器:app://bundle/<路径> → webRoot/<路径>,文件不存在时回退到 index.html(SPA)
     protocol.handle('app', (request) => {
       const url = new URL(request.url)

@@ -2,7 +2,7 @@
   "name": "english-learner",
   "productName": "EnglishLearner",
   "license": "GPL-3.0",
-  "version": "0.3.32",
+  "version": "0.3.33",
   "private": true,
   "author": "EnglishLearner",
   "description": "英语学习桌面应用 — 基于 TypeWords 的本地版",
@@ -24,12 +24,17 @@
     "files": [
       "main.js",
       "preload.js",
+      "local-tts.cjs",
       "package.json"
     ],
     "extraResources": [
       {
         "from": "frontend/dist",
         "to": "web"
+      },
+      {
+        "from": "scripts/local-tts-worker.py",
+        "to": "tts/local-tts-worker.py"
       }
     ],
     "win": {

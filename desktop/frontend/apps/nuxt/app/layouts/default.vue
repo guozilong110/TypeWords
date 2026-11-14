@@ -113,13 +113,13 @@ onMounted(() => {
     if (settingStore.theme === 'auto') syncTitleBarOverlay()
   })
 
-  // 网络/接口失败轻提示:Edge TTS 合成失败时提示一次(30 秒节流,避免连续失败刷屏)
+  // 在线与本地合成都失败才提示(30 秒节流，避免连续失败刷屏)
   let lastTtsFailToast = 0
   window.addEventListener('edge-tts-fail', () => {
     const now = Date.now()
     if (now - lastTtsFailToast > 30000) {
       lastTtsFailToast = now
-      Toast.warning('网络不可用,翻译朗读失败')
+      Toast.warning('在线与本地语音均不可用，朗读失败')
     }
   })
 

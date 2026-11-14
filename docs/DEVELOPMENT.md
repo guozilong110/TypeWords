@@ -14,13 +14,18 @@
 
 **行为变化**:
 - 启动直达 /words;帮助/更新日志/关于 已改为本项目信息
-- 发音全在线:单词 = 有道 dictvoice;中文翻译 = 微软 Edge TTS;例句朗读已删除(例句文字照常显示)。断网时单词/翻译均无发音(节流 Toast)
+- 单词、翻译和例句统一使用 Edge TTS；失败后英文走本机 Kokoro，中文走 macOS 系统声音，音频缓存可离线复用。
 - 查词:主界面顶部查词栏,搜索范围 = 已加载词库 + 全部内嵌词库索引(离线);练习页例句点击查词同源
 - APP_NAME = 'EnglishLearner';GPL 致谢保留在设置-关于
 
-## 二、语音架构(2026-08-04 起全在线,无本地引擎)
+## 二、语音架构（Edge 在线优先 + 常驻本地兜底）
 
-- 单词发音 = 有道 dictvoice(在线);中文翻译朗读 = 微软 Edge TTS(晓晓等 6 音色,主进程 WebSocket 合成,免 key)
+- 单词、中文翻译和例句共用 `tts-speak`：先请求微软 Edge TTS，失败后 60 秒内直接用本地语音。
+- `local-tts.cjs` 管理常驻 Python 子进程，应用 ready 时加载 Kokoro-82M；英文使用已缓存的 `af_heart`，中文在 macOS 使用已安装的 Tingting 系统声音。无任何自动模型下载。
+- Python 默认优先 `~/.base/bin/python3`，其次 PATH 中的 `python3`，可通过 `TYPEWORDS_TTS_PYTHON` 指定。需预装 kokoro/torch/soundfile/misaki、spaCy `en_core_web_sm`，并在 Hugging Face 缓存中备齐 Kokoro 权重、config 和 af_heart 音色。打包只带 worker 脚本，不带 Python 或模型。
+- Electron 正常退出、`app.exit()` 时终止子进程；Python 监测父 PID，主进程被强制终止时也会自行退出。macOS 仅关闭窗口不会退出主进程，模型同样保留。
+- 本地 WAV 沿用前端统一音频缓存；缓存键仍为文本 + 请求音色 + 语速。本地英文固定 af_heart，不跟随 Edge 音色，已缓存的本地音频会持续复用，清空语音缓存后可重新合成。
+- 验证：`node --test desktop/scripts/local-tts.test.cjs`；实际离线合成需上述本机运行环境。
 - **语速分离(v0.3.8)**:`wordSoundSpeed` = 单词发音播放倍速;`transSoundSpeed` = 翻译朗读 Edge TTS rate。使用边界:单词播放用 wordSoundSpeed;所有 playEdgeTts 翻译朗读(useWordPracticeAudio/WordDetail/TranslationList/TypeWord 发音区按钮/preloadTts 预加载)用 transSoundSpeed。设置 UI:音效 tab 的 SoundMasterControl 总倍速展开两项(SOUND_SPEED_ITEMS),i18n key `trans_speed` 已加全部 14 个语言文件。老存档迁移:checkAndUpgradeSaveSetting 里 transSoundSpeed undefined → 沿用 wordSoundSpeed。
 - **音效本地化(v0.3.8)**:`public/sound/beep.wav`(提示音)+ `correct.wav`(正确音)+ `key-sounds/` 8 个按键音(机械0-3/机械键盘1/机械键盘2/老式机械键盘/笔记本键盘,程序生成)。**⚠️ sound.ts 的 setAudio 必须用 `new Audio(src)` 本地路径,不能拼 `ENV.RESOURCE_URL`**(远程 files.typewords.cc 的 key-sounds 被 Cloudflare 545 拦截,v0.3.7 因此产生 31 条 NotSupportedError);getAudioFileUrl 返回 `.wav`。音效加载失败时 play() 必须 `.catch(() => {})`。
 - 朗读缓存三层 + 双 key 兼容:见 PITFALLS.md 第 24/25 条
